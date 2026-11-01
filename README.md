@@ -1,5 +1,11 @@
 # YunaUI 日本語化 1.1.4j（非公式）
 
+> **お知らせ：YunaUI 1.1.5 から、日本語化が公式に取り込まれました。**
+> これから使う場合は、公式の [YunaUI 1.1.5 以降](https://github.com/YunasXI/yunaui/releases/tag/1.1.5) を入れてください。このリポジトリの導入は不要です。
+> このリポジトリは、今後の翻訳の追加や、公式へ取り込んでもらう修正を作るための作業場所として残しています。
+> 以下は 1.1.4j までの古い説明です。
+
+
 Based on YunaUI by Yunas - https://github.com/YunasXI/yunaui
 
 YunaUI 1.1.4（Ashita v4 / VanaCore 用 HUD アドオン）の画面を日本語で表示するための、非公式の日本語化パッチです。
