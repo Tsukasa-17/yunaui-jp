@@ -14,7 +14,7 @@ YunaUI 1.1.3（Ashita v4 / VanaCore 用 HUD アドオン）の画面を日本語
 | `yunaui_jp.lua` | 日本語化の処理（フォント・名前・設定画面・コマンド） |
 | `yunaui_lang.lua` | 日本語辞書 |
 | `orig113_to_jp.patch` | 公式 1.1.3 の `yunaui.lua` に当てる差分（追加行のみ＋バージョン表記） |
-| `README_JP.md` / `CHANGES_JP.md` | 説明 / 改変の記録 |
+| `README.md` / `CHANGES_JP.md` | 説明 / 改変の記録 |
 | `LICENSE` / `NOTICE` | GPL-3.0 全文 / YunaUI 公式の NOTICE（原文のまま） |
 
 YunaUI 本体（`yunaui.lua` ほか）・画像・地図・フォント・音は同梱していません。公式から入手してください。
