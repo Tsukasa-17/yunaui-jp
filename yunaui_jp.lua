@@ -1,4 +1,4 @@
--- YunaUI Japanese localization 1.1.3j - Copyright (C) 2026 Tsukasa
+-- YunaUI Japanese localization 1.1.4j - Copyright (C) 2026 Tsukasa
 -- Based on YunaUI by Yunas - https://github.com/YunasXI/yunaui
 -- License: GPL-3.0 with the YunaUI attribution term (GPL-3.0 section 7(b)); see LICENSE and NOTICE.
 -- This program comes with ABSOLUTELY NO WARRANTY.
