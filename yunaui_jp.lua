@@ -8,7 +8,7 @@
 local imgui = require('imgui');
 local L = require('yunaui_lang');
 
-local JP = { active = false, cfg = { ui_lang = 'auto', font_scale = 1.0, minimap_text_scale = 1.3, cmd_enc = 'sjis', chat_enc = 'sjis' } };
+local JP = { active = false, cfg = { ui_lang = 'auto', font_scale = 1.0, minimap_text_scale = 1.3 } };
 local good, install_core_proxy;   -- (前方宣言)
 local JA, UP = L.JA, {};
 local memo, memo_n = {}, 0;
@@ -25,16 +25,12 @@ local function load_cfg()
         if s and s >= 0.8 and s <= 1.4 then JP.cfg.font_scale = s; end
         local m = tonumber(t.minimap_text_scale);
         if m and m >= 0.5 and m <= 2.0 then JP.cfg.minimap_text_scale = m; end
-        if t.enc_v == 2 then                                         -- (前の版で保存した utf8 等は捨てて既定 sjis に戻す)
-            if t.cmd_enc == 'raw' or t.cmd_enc == 'sjis' or t.cmd_enc == 'utf8' then JP.cfg.cmd_enc = t.cmd_enc; end
-            if t.chat_enc == 'sjis' or t.chat_enc == 'utf8' then JP.cfg.chat_enc = t.chat_enc; end
-        end
     end
 end
 local function save_cfg()
     local f = io.open(CFG_FILE, 'w');
     if not f then return; end
-    f:write(string.format('return { ui_lang = %q, font_scale = %.2f, minimap_text_scale = %.2f, cmd_enc = %q, chat_enc = %q, enc_v = 2 };\n', JP.cfg.ui_lang, JP.cfg.font_scale, JP.cfg.minimap_text_scale or 1.3, JP.cfg.cmd_enc or 'sjis', JP.cfg.chat_enc or 'sjis'));
+    f:write(string.format('return { ui_lang = %q, font_scale = %.2f, minimap_text_scale = %.2f };\n', JP.cfg.ui_lang, JP.cfg.font_scale, JP.cfg.minimap_text_scale or 1.3));
     f:close();
 end
 
@@ -75,7 +71,7 @@ function JP.t(s)
 end
 function JP.msg(t)                                                   -- (公式 msg の文: 翻訳して、チャット欄用にShift-JISへ（UTF-8のままだと化ける）)
     t = JP.t(t);
-    if JP.active and JP.cfg.chat_enc ~= 'utf8' and JP.to_sj then t = JP.to_sj(t); end
+    if JP.active and JP.to_sj then t = JP.to_sj(t); end
     return t;
 end
 YUI_JP_T = JP.t;   -- dps.lua / equip.lua のチャットメッセージ用
@@ -213,7 +209,7 @@ end
 
 -- 描画リスト DL.T（公式の文字描画の要）を翻訳付きに
 
--------------------------------------------------------------------- デバッグ（/yui jpdebug）
+-------------------------------------------------------------------- デバッグ表示（内部用）
 JP.dbg = false;
 local DSEEN = {};
 local function hex(x)
@@ -631,33 +627,6 @@ function JP.command(sub, args, msg)
         JP.cfdbg = not JP.cfdbg;
         JP.say(JP.cfdbg and ('戦闘ログデバッグ：オン (' .. tostring(JP.CFLOG) .. ')') or '戦闘ログデバッグ：オフ');
         if JP.cfdbg then JP.cflog('---- ON ' .. os.date('%Y-%m-%d %H:%M:%S')); end
-        return true;
-    end
-    if sub == 'jpdebug' then
-        JP.dbg = not JP.dbg; DSEEN = {};
-        JP.say('jpdebug: ' .. (JP.dbg and 'ON（ミニマップの出口と装備欄にマウスを当ててください）' or 'OFF'));
-        if JP.dbg then local f, h, how = cur_font_info(); dlog('fonts', 'fonts', 'chat=' .. tostring(YUI_FONTS and YUI_FONTS.chat), 'main=' .. tostring(YUI_FONTS and YUI_FONTS.main), 'merged=' .. #JP.MERGED, 'jpfile=' .. tostring(jp_font_path())); end
-        return true;
-    end
-    if sub == 'iconcheck' then                                       -- 戦利品ボックスのアイコン診断（読むだけ。英語表示でも動く）
-        print('[YunaUI] iconcheck: YUI_EQ_ICON=' .. type(YUI_EQ_ICON));
-        for _, id in ipairs({ 4096, 13014, 640 }) do
-            local bm, sz = '?', '?';
-            pcall(function() local r = AshitaCore:GetResourceManager():GetItemById(id); bm = tostring(r and r.Bitmap ~= nil); sz = tostring(r and r.ImageSize); end);
-            local ok, ic = pcall(function() return YUI_EQ_ICON and YUI_EQ_ICON(id); end);
-            print(string.format('  id=%d bitmap=%s size=%s icon=%s ptr=%s', id, bm, sz, ok and tostring(ic ~= nil and ic ~= false) or ('ERR ' .. tostring(ic)), ok and ic and tostring(ic.ptr) or '-'));
-        end
-        return true;
-    end
-    if sub == 'jpenc' then                                           -- (文字コードの切替: /yui jpenc cmd|chat sjis|utf8。実機で合わない時の逃げ道)
-        local k, v = (args[3] or ''):lower(), (args[4] or ''):lower();
-        if (k == 'cmd' and (v == 'raw' or v == 'sjis' or v == 'utf8')) or (k == 'chat' and (v == 'sjis' or v == 'utf8')) then JP.cfg[k .. '_enc'] = v; save_cfg(); end
-        JP.say(string.format('文字コード  コマンド: %s  チャット: %s  （/yui jpenc cmd raw|sjis|utf8 / chat utf8|sjis）', JP.cfg.cmd_enc, JP.cfg.chat_enc));
-        return true;
-    end
-    if sub == 'jpmb' then                                            -- (アクションバーの送信診断: 元のマクロ行と送ったバイトを16進で表示)
-        JP.mbdbg = not JP.mbdbg;
-        JP.say(JP.mbdbg and 'アクションバー送信デバッグ：オン' or 'アクションバー送信デバッグ：オフ');
         return true;
     end
     if sub ~= 'lang' then return false; end
@@ -1178,16 +1147,9 @@ end
 JP.to_sj = to_sj;
 function JP.say(s)                                                   -- (チャット欄への表示: 公式の msg と同じ道（UTF-8）。print にShift-JISを渡すと何も出なかった)
     if JP.msgf then local ok = pcall(JP.msgf, s); if ok then return; end end   -- (msg → JP.msg が Shift-JIS にする)
-    if JP.active and JP.cfg.chat_enc ~= 'utf8' then s = to_sj(s); end
+    if JP.active then s = to_sj(s); end
     print('[YunaUI] ' .. s);
 end
-local function hexall(x)
-    if type(x) ~= 'string' then return tostring(x); end
-    local t = {};
-    for i = 1, #x do t[#t + 1] = string.format('%02X', x:byte(i)); end
-    return table.concat(t, ' ');
-end
-JP.RAW = {};                                                         -- (作った平文 → 元のマクロ行の生バイト)
 -- マクロ行を「コマンドとして送れる文字」に（UTF-8で返す。送る直前に JP.cmd で Shift-JIS へ）
 -- 公式の mb_plain は定型文の名前から 0x7F-0xFF を消す → 日本語名が空になる。ここでは
 --  ・0xFD+4バイト+0xFD（定型文）→ ParseAutoTranslate の名前（括弧・色コードなし）
@@ -1229,23 +1191,11 @@ function JP.mb_plain(ln)
     end
     flush();
     local r = table.concat(out);
-    if JP.RAW.n == nil or JP.RAW.n > 500 then JP.RAW = { n = 0 }; end
-    JP.RAW[r] = ln; JP.RAW[(r:gsub('%s*<wait%s*%d+%.?%d*>', ''))] = ln:gsub('%s*<wait%s*%d+%.?%d*>', ''); JP.RAW.n = JP.RAW.n + 1;
-    if JP.dbg then print('[YUI-JPDBG] mb_plain ' .. JP.hex(ln) .. ' -> ' .. r); end
     return r;
 end
 function JP.cmd(s)                                                   -- (QueueCommand に渡す直前)
     if not JP.active then return s; end
-    local m, out = JP.cfg.cmd_enc, s;
-    if m == 'raw' and JP.RAW[s] then out = JP.RAW[s];                -- (既定: ゲームのマクロと同じ生バイト（Shift-JIS＋定型文 FD..FD）のまま)
-    elseif m ~= 'utf8' then out = to_sj(s); end                      -- (raw で元が無い行＝編集のテストなど: Shift-JIS に)
-    if JP.mbdbg then
-        JP.say('[mb] ' .. m .. ' 文: ' .. s);
-        if JP.RAW[s] then JP.say('[mb] 元: ' .. hexall(JP.RAW[s])); end
-        JP.say('[mb] 送: ' .. hexall(out));
-        pcall(function() local f = io.open((addon.path:gsub('[\\/]+$', '')) .. '\\yunaui-jpmb.txt', 'a'); if f then f:write(os.date('%H:%M:%S '), m, ' | ', hexall(JP.RAW[s] or ''), ' | ', hexall(out), '\n'); f:close(); end end);
-    end
-    return out;
+    return to_sj(s);                                                 -- (Shift-JIS で送る)
 end
 -- マクロ編集: 開く時にShift-JIS→UTF-8（入力欄で読めるように）、保存時にUTF-8→Shift-JIS（変えていない行は元の生データ）
 function JP.me_open(E)

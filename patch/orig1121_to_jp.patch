@@ -1,5 +1,5 @@
---- a/yunaui.lua	2026-11-03 03:51:21.316218394 +0900
-+++ b/yunaui.lua	2026-11-03 04:57:47.875300474 +0900
+--- a/yunaui.lua
++++ b/yunaui.lua
 @@ -3062,6 +3062,7 @@
      local kind = bits(4);
      local param;
@@ -231,8 +231,8 @@
      if M.dbg then msg(string.format('[mb] +%.2fs (cpu +%.2fs) line: %s', now - (M.qt0 or now), os.clock() - (M.qc0 or os.clock()), q.cmd)); end
      local bare = q.cmd:gsub('"[^"]*"', '');
      if mode == 2 and (bare:match('<st>') or bare:match('<stal>') or bare:match('<stnpc>') or bare:match('<stpc>') or bare:match('<stpt>')) then
---- a/dps.lua	2026-11-03 03:51:21.312218444 +0900
-+++ b/dps.lua	2026-11-03 03:51:21.860211687 +0900
+--- a/dps.lua
++++ b/dps.lua
 @@ -181,7 +181,7 @@
      return string.format('%d:%02d', sec / 60, sec % 60);
  end
@@ -242,8 +242,8 @@
  
  -- Wall clock in seconds (os.clock is wall time on Windows)
  local function now() return os.clock(); end
---- a/equip.lua	2026-11-03 03:51:21.260219084 +0900
-+++ b/equip.lua	2026-11-03 03:51:21.872211540 +0900
+--- a/equip.lua
++++ b/equip.lua
 @@ -73,7 +73,7 @@
      ui.sb_reset = true;                                              -- (logging in switches to your character's settings: the HP / MP / TP bars
  end);                                                                --  go back to its places, measured again - see JOBS.statbars)
