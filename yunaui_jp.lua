@@ -74,7 +74,7 @@ function JP.msg(t)                                                   -- (公式 
     if JP.active and JP.to_sj then t = JP.to_sj(t); end
     return t;
 end
-YUI_JP_T = JP.t;   -- dps.lua / equip.lua のチャットメッセージ用
+YUI_JP_T = JP.msg;   -- dps.lua / equip.lua のチャットメッセージ用（翻訳してShift-JISへ。公式 msg と同じ）
 
 -------------------------------------------------------------------- UTF-8 文字単位の字間描画
 function JP.mb(s) return JP.active and type(s) == 'string' and s:find('[\128-\255]') ~= nil; end

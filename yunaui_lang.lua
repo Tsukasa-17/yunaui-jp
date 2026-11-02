@@ -287,6 +287,7 @@ M.JA = {
     ['Shine'] = '輝き', ['Trace'] = 'なぞる光', ['Twinkle'] = 'きらめき', ['Rounded'] = '角丸', ['Slanted'] = '斜め', ['Prism'] = 'プリズム', ['Cut corners'] = '角落とし',
     ['Soft sheen'] = 'やわらかな艶', ['Glass gloss'] = 'ガラスの光沢', ['Shimmer'] = 'ゆらめき', ['Flowing light'] = '流れる光', ['Sparkles'] = 'スパークル', ['Breathing'] = '呼吸', ['Flat'] = 'フラット', ['Ribbon'] = 'リボン', ['Frame'] = 'フレーム',
     ['You and your pet'] = '自分とペット', ['Your party'] = 'パーティ', ['Your alliance'] = 'アライアンス', ['Trusts'] = 'フェイス', ['NPCs'] = 'NPC',
+    ['Savage Blade'] = 'サベッジブレード', ['Requiescat'] = 'レクイエスカット', ['Red Lotus Blade'] = 'レッドロータスブレード',   -- (連携候補リストのプレビュー用の見本WS)
     ['Light'] = '光', ['Darkness'] = '闇', ['Fragmentation'] = '分解', ['Distortion'] = '湾曲', ['Fusion'] = '核熱', ['Gravitation'] = '重力',
     ['Transfixion'] = '貫通', ['Detonation'] = '炸裂', ['Scission'] = '切断', ['Compression'] = '収縮', ['Impaction'] = '衝撃', ['Induration'] = '硬化', ['Reverberation'] = '振動', ['Liquefaction'] = '溶解',
     ['Thunder'] = '雷', ['Water'] = '水',
