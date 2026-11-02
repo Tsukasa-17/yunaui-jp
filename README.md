@@ -4,6 +4,7 @@
 > これから使う場合は、公式の [YunaUI 1.1.5 以降](https://github.com/YunasXI/yunaui/releases/tag/1.1.5) を入れてください。このリポジトリの導入は不要です。
 > このリポジトリは、今後の翻訳の追加や、公式へ取り込んでもらう修正を作るための作業場所として残しています。
 > 現在の作業版は公式 1.1.21 がベースです（変更点は `CHANGES_JP.md`、公式との差分は `patch/orig1121_to_jp.patch`）。
+> 戦闘ログの色分けのテストと解析データ取得のため、`/yui jpcf` で診断ログ（jpdebug.log）を出力できます（もう一度打つとオフ）。
 > 以下は 1.1.4j までの古い説明です。
 
 
@@ -30,8 +31,6 @@ YunaUI 1.1.4（Ashita v4 / VanaCore 用 HUD アドオン）の画面を日本語
 
 ## コマンド
 - `/yui lang auto|ja|en` 表示言語（auto＝クライアントの言語に合わせる）
-- `/yui jpdebug` 日本語化のデバッグ表示 ON/OFF
-- `/yui iconcheck` トレジャープールのアイコン診断（英語表示でも使えます）
 
 ## 設定
 `addons/yunaui/yunaui_jp_settings.lua`（設定画面からも変更できます）:
