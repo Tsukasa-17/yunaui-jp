@@ -88,6 +88,13 @@ M.JA = {
     -- 言語設定
     ['LANGUAGE'] = '言語', ['Auto'] = '自動', ['English'] = 'English', ['日本語'] = '日本語',
     ['Auto follows the game client. Reload the addon after changing (/addon reload yunaui).'] = '自動はゲームクライアントの言語に合わせます。変更後はアドオンを再読み込みしてください（/addon reload yunaui）。',
+    ['Turned cards'] = '裏返したカード',
+    ['Job box on the right'] = 'ジョブ枠を右に',
+    ['Job tag on the name, TP on the left'] = 'ジョブタグを名前の前に・TPを左に',
+    ['No frame: HP and MP on one line'] = 'フレームなし：HPとMPを1行に',
+    ['Keep YunaUI fonts: On'] = 'YunaUIのフォントを使う：オン',
+    ['Keep YunaUI fonts: Off'] = 'YunaUIのフォントを使う：オフ',
+    ["On: HP, MP, numbers and English names keep YunaUI's own fonts; menus, items and weapon skills stay in Japanese. Reload the addon after changing."] = 'オン：HP・MP・数字・英語の名前はYunaUIのフォントのまま、メニュー・アイテム・WSは日本語で表示します。変更後はアドオンを再読み込みしてください。',
     ['Japanese text size'] = '日本語の文字サイズ',
     -- タブ
     ['TARGET'] = 'ターゲット', ['PARTY'] = 'パーティ', ['BARS'] = 'バー', ['CHAT'] = 'チャット',
@@ -427,7 +434,7 @@ M.JA = {
     -- Hints
     ['One click moves every piece of the UI for your screen size. Move anything afterwards as you like.'] = 'ワンクリックで画面サイズに合わせて全UIを配置します。後から自由に移動できます。',
     ['Makes every piece bigger or smaller at once - after a new monitor or resolution, one click. Each piece\'s own Size still works on top of it.'] = '全要素を一括で拡大/縮小します。解像度変更後に便利です。個別サイズ設定も引き続き有効です。',
-    ['Give it a name, SAVE keeps where everything is now and every size (sizes, lengths, thickness, the chat and the Damage Meter too), LOAD puts it all back. Colours, looks and on / off are not changed.'] = '名前を付けて「保存」すると現在の位置とサイズを記録します。「読込」で復元します。色や表示のオン/オフは変更されません。',
+    ['Give it a name, SAVE keeps your whole UI as it is now: where everything is, every size, look, colour and on / off (the chat and the Damage Meter too). LOAD puts it all back exactly as saved. (A layout saved before 1.1.33 keeps only places and sizes: SAVE it again.)'] = '名前を付けて「保存」すると、位置・サイズ・見た目・色・オン/オフなどUI全体を今のまま記録します（チャットとダメージメーターも）。「読込」で保存した通りに戻します。（1.1.33より前に保存したレイアウトは位置とサイズのみ：もう一度保存してください）',
     ['Drag anything to move it; each piece is free.'] = 'ドラッグで移動できます。各要素は自由に配置できます。',
 
     -- Damage Meter
@@ -800,10 +807,50 @@ M.JA = {
     ['Home Points / Survival Guides'] = 'ホームポイント / サバイバルガイド',
     ['On: Home Points show as a pale blue crystal and Survival Guides as a small book, all over the zone - as on the game\'s map.'] = 'オン: ホームポイントを淡い青のクリスタル、サバイバルガイドを小さな本としてエリア全体に表示します（ゲームのマップと同じ）。',
     ['Clamming Point'] = '潮干狩りポイント',
+    -- ===== 追加分（公式 1.1.30〜1.1.36 対応: デバフタイマー・裏返したカード・マクロ・連携候補リスト） =====
+    ['Debuff timers'] = 'デバフタイマー',
+    ['Debuffs on your target'] = 'ターゲットのデバフ',
+    ['DEBUFFS ON YOUR TARGET'] = 'ターゲットのデバフ',
+    ['Debuffs in their own window'] = 'デバフを別ウィンドウに',
+    ['On: the debuffs YOU put on the monster you target (Dia, Slow, Paralyze...) show here too, in red, with how long they have left - so you know when to cast them again.'] = 'オン：自分がターゲットのモンスターに入れたデバフ（ディア、スロウ、パライズなど）もここに赤色で残り時間付きで表示します。かけ直すタイミングがわかります。',
+    ['On: the debuffs on your target get a window of their own - drag it anywhere (Edit Mode, or here while this tab is open). Off: they show in the Timers list.'] = 'オン：ターゲットのデバフを専用ウィンドウに表示します。好きな場所へドラッグできます（編集モード、またはこのタブを開いている間）。オフ：タイマーリストに表示します。',
+    ["Their sizes are the Timers list's. Turn on Debuffs in their own window for sizes of their own."] = 'サイズはタイマーリストと同じです。個別のサイズにするには「デバフを別ウィンドウに」をオンにしてください。',
+    ['Dia II'] = 'ディアII',
+    ['Monster name'] = 'モンスター名',
+    ['Fan timer size'] = '連携候補リストのタイマーサイズ',
+    ['Turned card length'] = '裏返したカードの長さ',
+    ['Turned card height'] = '裏返したカードの高さ',
+    ['Turn the cards over (the card icon by PARTY) for their own settings: length, height, TP and distance text.'] = 'カードを裏返すと（PARTYの横のカードアイコン）専用の設定になります：長さ、高さ、TPと距離の文字。',
+    ['Turned cards: Turned card length / height, TP text size and the distance settings change only them. Turn them back (the card icon by PARTY) for the other card settings.'] = '裏返したカード：長さ・高さ、TPの文字サイズ、距離の設定は裏返したカードだけに効きます。ほかのカード設定は表に戻してください（PARTYの横のカードアイコン）。',
+    ['Distance position'] = '距離の位置',
+    ['Distance text size'] = '距離の文字サイズ',
+    ['Space between members'] = 'メンバーの間隔',
+    ['Space between members: more or less room between the cards in a list.'] = 'メンバーの間隔：リスト内のカード同士の間隔を広げたり狭めたりします。',
+    ['Space between lists'] = 'リストの間隔',
+    [' Space between lists: between the party and the alliances.'] = ' リストの間隔：パーティとアライアンスの間隔です。',
+    [' (Anchor the alliances to the party - the two dots by PARTY - for a Space between lists slider.)'] = '（アライアンスをパーティに固定すると（PARTYの横の2つの点）「リストの間隔」スライダーが出ます）',
+    ['Combat log joined to the chat'] = '戦闘ログをチャットに固定',
+    ['On: the combat log sits right beside the chat, the same size (its anchor at its bottom right does the same). Off: it moves on its own.'] = 'オン：戦闘ログをチャットのすぐ横に同じサイズで並べます（右下のアンカーでも同じ）。オフ：単独で動かせます。',
+    ['Gear card joined to the chats'] = '装備カードをチャットの間に固定',
+    ['On: the gear card sits in the row of chats, between the chat and the combat log (its anchor over the card does the same). Off: it moves on its own.'] = 'オン：装備カードをチャットの列に、チャットと戦闘ログの間に並べます（カード上のアンカーでも同じ）。オフ：単独で動かせます。',
+    ['Ctrl / Alt + arrows pick a macro'] = 'Ctrl / Alt + 矢印キーでマクロを選ぶ',
+    ["On: with Ctrl or Alt held, Left / Right move the bar's highlight and Enter runs it. Off: they are the game's - Ctrl + Left / Right pages through your inventory. Ctrl / Alt + 1 to 0 always work."] = 'オン：CtrlかAltを押しながら左右キーでバーの選択を動かし、Enterで実行します。オフ：ゲーム側の操作のまま（Ctrl + 左右でかばんのページ送り）。Ctrl / Alt + 1〜0 はいつでも使えます。',
+    ['In GENERAL > MY LAYOUTS you can keep five layouts of your own - your whole UI, exactly as you saved it.'] = '一般 > マイレイアウト で自分のレイアウトを5つまで保存できます。UI全体を保存したとおりに残せます。',
+    -- ===== 追加分（公式 1.1.37〜1.1.39 対応: 解像度追従・トレード依頼アラート） =====
+    ['Follow the resolution'] = '解像度に合わせる',
+    ['On: when you change the resolution (in VanaCore or the game), every piece resizes by the same amount and keeps its place on the screen, so the UI looks the same at 1080p, 1440p or 4K. Your own sizes stay yours. Off: nothing changes by itself.'] = 'オン：解像度を変えると（VanaCoreまたはゲーム側）、すべての部品が同じ比率で拡大縮小され、画面上の位置も保たれます。1080p・1440p・4Kでも同じ見た目になります。個別のサイズ指定はそのままです。オフ：自動では変わりません。',
+    ['Makes every piece bigger or smaller at once. With Follow the resolution on it changes by itself when your resolution does. Each piece\'s own Size still works on top of it.'] = 'すべての部品をまとめて大きく/小さくします。「解像度に合わせる」がオンなら、解像度変更時に自動で変わります。各部品の個別サイズはその上に効きます。',
+    ['Trade request alert'] = 'トレード依頼アラート',
+    ['On: when someone wants to trade with you, a card shows who, with ACCEPT and DECLINE, until the trade opens or is cancelled; if you are in another window, the game flashes in the taskbar. It sits with the item popup.'] = 'オン：トレードを求められたとき、相手の名前と ACCEPT / DECLINE のカードを出します。トレード開始またはキャンセルまで表示。別ウィンドウにいるときはタスクバーでゲームを点滅させます。アイテム取得ポップアップと同じ場所です。',
+    -- ===== 追加分（公式 1.1.42〜1.1.45 対応: Void red・戦利品のロット/パス制限） =====
+    ['Void red'] = 'ヴォイドレッド',
+    ["You can't lot or pass while you're knocked out."] = '戦闘不能中はロット・パスできません。',
+
 }
 
 -- 文字列連結で作られるメッセージ用（Luaパターン → 置換）
 M.PATTERNS = {
+    { '^Resolution (%d+)x(%d+): the UI resized to match %(Size of everything ([%d%.]+)x%)%. GENERAL > SIZE > Follow the resolution turns this off%.$', '解像度 %1x%2: UIを合わせました（全体のサイズ %3x）。オフにするには 一般 > サイズ > 解像度に合わせる。' },
     { '^Settings that match "(.*)"$', '「%1」に一致する設定' },
     { '^Settings copied to (.+)%.$', '設定を %1 にコピーしました。' },
     { '^Your main asked: pass all %((%d+) items?%)%.$', 'メインキャラから: 全てパス（%1個）。' },
@@ -852,6 +899,7 @@ M.PATTERNS = {
     { '^(.+) yalms$', '%1 ヤルム' },
     { '^Thank you to our beta testers:\n', 'ベータテスターの皆さん、ありがとう:\n' },
     { '^(.+): %(empty%)$', '%1: （空き）' },
+    { '^Not lotted: (.+) is Rare and you already have one%.$', 'ロットしませんでした: %1 はレアで、すでに持っています。' },
 }
 
 -- チャンネル名は英語のまま（Tsukasaさんの判断）。'Party' は編集モード名などと共用なので、

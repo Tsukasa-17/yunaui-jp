@@ -3,7 +3,7 @@
 -- Japanese localization: Tsukasa (yunaui_jp.lua, yunaui_lang.lua; the [JP] lines) - https://github.com/Tsukasa-17/yunaui-jp
 addon.name    = 'yunaui';
 addon.author  = 'Yunas';
-addon.version = '1.1.21';
+addon.version = '1.1.45';
 addon.desc    = 'YunaUI: target bar, party and alliance lists, chat, your bars, gear strip, pet bar, cooldowns and a damage meter, in one style.';
 addon.link    = '';
 
@@ -161,6 +161,7 @@ local function save()
         local disk = own_file('settings.lua');                       --  saving now wrote our old ones over them, the copy lost: it took several tries)
         if disk and disk ~= WATCH.own then WATCH.at = 0; return; end
     end
+    YUI_NSAVE = (YUI_NSAVE or 0) + 1;                                -- (/yui prof: how often the settings are written)
     settings.save();
     WATCH.own = own_file('settings.lua');                          -- our own change: not "from outside"
 end
@@ -222,14 +223,58 @@ local C = {
     mp       = { 0.40, 0.55, 1.00 },             -- the MP bars: blue to violet
     mp2      = { 0.62, 0.40, 1.00 },
 };
-local function u32(c) return imgui.GetColorU32(c); end
+-- The gold look's accent, as picked (BARS > HP bar colour): Gold, or Void red - then every gold YunaUI draws (frames, titles,
+-- lines, the minimap, the chat's edge, the meter, the pool...) turns red, and its palest golds and creams white: red and
+-- white. Oranges and reds stay (HP warnings), and other colours too. YUI_TINT_ON is set by C.apply_hp.
+YUI_TINT_ON = false;
+YUI_TINT_W = false;
+function YUI_AZ() return YUI_TINT_ON and { 0.96, 0.97, 1.0 } or C.HEXMP[1]; end   -- (the gold look's second accent: azure; Void red: white)                                                  -- (set round what turns white, not red: the minimap's exits)
+function YUI_TINTW(f, ...)                                           -- (f drawn with gold turned white)
+    local o = YUI_TINT_W; YUI_TINT_W = true;
+    local ok, e = pcall(f, ...);
+    YUI_TINT_W = o;
+    return ok, e;
+end
+function YUI_NOTINT(f)                                              -- (f always drawn in its own colours - the chat's words: never the theme's)
+    return function(...)
+        local o = YUI_TINT_ON; YUI_TINT_ON = false;
+        local r = { pcall(f, ...) };
+        YUI_TINT_ON = o;
+        if not r[1] then error(r[2], 0); end
+        return unpack(r, 2, table.maxn(r));
+    end
+end
+function YUI_U4K(r, g, b, a)                                         -- (a colour kept as it is - the gil coin stays gold)
+    local o = YUI_TINT_ON; YUI_TINT_ON = false;
+    local c = imgui.GetColorU32({ r, g, b, a });
+    YUI_TINT_ON = o;
+    return c;
+end
+function YUI_TINT(r, g, b)
+    local mx = math.max(r, g, b);
+    if mx <= 0.05 or r < g or g < b then return r, g, b; end         -- (gold: red the most, then green, then blue)
+    local mn = b;
+    local s = (mx - mn) / mx;
+    if s < 0.22 then return r, g, b; end                             -- (near grey: kept)
+    local h = 60 * (g - b) / (mx - mn);                              -- (its hue, 0 red .. 60 yellow)
+    if h < 36 or h > 62 then return r, g, b; end                     -- (oranges and reds kept - the HP warnings)
+    if h > 48 and s > 0.6 then return r, g, b; end                   -- (a strong yellow kept too: the HP warning's outline under 75%, as in Gold)
+    if YUI_TINT_W or mn / mx > 0.55 then local w = mx * 0.98; return w, w, w * 1.0; end   -- (a pale gold / cream - or anything in a white place: white)
+    local s2 = math.min(1, s * 1.10);                                -- (a gold: red - bright, not dark)
+    return mx, mx * (1 - s2), mx * (1 - s2) * 1.08;
+end
+local U32S_ = { 0, 0, 0, 1 };
+local function u32(c)                                              -- (with Void red picked: its gold turned red / white, as U4)
+    if YUI_TINT_ON and c[1] then U32S_[1], U32S_[2], U32S_[3] = YUI_TINT(c[1], c[2], c[3]); U32S_[4] = c[4] or 1; return imgui.GetColorU32(U32S_); end
+    return imgui.GetColorU32(c);
+end
 -- Frame cost (VanaCore's findings): no Lua table made per draw call. U4(r, g, b, a) is u32({ r, g, b, a }) through one
 -- scratch table; DL.L(dl, x, y, x2, y2, ...) is dl:AddLine({ x, y }, { x2, y2 }, ...) through scratch points (the binding
 -- reads them during the call and keeps nothing). The arguments are all worked out before a call fills its scratch.
 local U4, DL;
 do
     local c4, P1, P2, P3, P4 = { 0, 0, 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 };
-    U4 = function(r, g, b, a) c4[1], c4[2], c4[3], c4[4] = r, g, b, a; return imgui.GetColorU32(c4); end
+    U4 = function(r, g, b, a) if YUI_TINT_ON then r, g, b = YUI_TINT(r, g, b); end c4[1], c4[2], c4[3], c4[4] = r, g, b, a; return imgui.GetColorU32(c4); end
     DL = {};
     function DL.L(d, a, b, c, e, ...) P1[1], P1[2], P2[1], P2[2] = a, b, c, e; return d:AddLine(P1, P2, ...); end
     function DL.R(d, a, b, c, e, ...) P1[1], P1[2], P2[1], P2[2] = a, b, c, e; return d:AddRect(P1, P2, ...); end
@@ -259,6 +304,70 @@ function C.screen()                                                  -- (the big
     return math.max(w, S.w), math.max(h, S.h);
 end
 function YUI_GS() return math.max(0.5, math.min(4, tonumber(cfg.scale) or 1)); end   -- GENERAL > Size of everything (equip.lua's bars too)
+-- GENERAL > SIZE > Follow the resolution: VanaCore's interface size (vana.ui.screen) watched; when it changes - the
+-- resolution changed in VanaCore - every piece is resized by the same amount (Size of everything) and moved to the same
+-- place in proportion (right edge stays at the right edge), so the UI looks the same at 1080p, 1440p or 4K. The first
+-- time it only notes the size: a look already set stays exactly as it is. Your own sizes stay yours, on top.
+C.RES = { PX = { chat = true, chat2 = true, chat3 = true } };
+function C.res_now()
+    local w, h = 0, 0;
+    pcall(function() local a, b = vana.ui.screen(); w, h = tonumber(a) or 0, tonumber(b) or 0; end);
+    return math.floor(w), math.floor(h);
+end
+function C.res_apply(ow, oh, nw, nh)                                -- (from one interface size to another: sizes by the height, places in proportion)
+    local k = nh / oh;
+    local kx, ky = nw / ow, nh / oh;
+    cfg.scale = math.max(0.5, math.min(4, (tonumber(cfg.scale) or 1) * k));
+    for key, v in pairs(cfg) do
+        if type(key) == 'string' and type(v) == 'number' then
+            local base = key:match('^(.+)_x$');
+            if base and type(cfg[base .. '_y']) == 'number' and v >= 0 and cfg[base .. '_y'] >= 0 then
+                cfg[key] = math.floor(v * kx + 0.5);
+                cfg[base .. '_y'] = math.floor(cfg[base .. '_y'] * ky + 0.5);
+            end
+            local wb = key:match('^(.+)_w$');                        -- (a window's own width and height in pixels: the chats' - by the same amount)
+            if wb and C.RES.PX[wb] and type(cfg[wb .. '_h']) == 'number' and v > 0 and cfg[wb .. '_h'] > 0 then   -- (only the chats: their sizes are pixels - the cast bar's is times Size already)
+                cfg[key] = math.floor(v * k + 0.5);
+                cfg[wb .. '_h'] = math.floor(cfg[wb .. '_h'] * k + 0.5);
+            end
+        end
+    end
+    pcall(function()                                                 -- (the HP / MP / TP bars - equip.lua: their places; their size is Size of everything's)
+        local E = YUI_EQ_GET and YUI_EQ_GET();
+        if type(E) ~= 'table' then return; end
+        local t = {};
+        for _, b_ in ipairs({ 'hpbar', 'mpbar', 'tpbar' }) do
+            local x_, y_ = tonumber(E[b_ .. '_x']), tonumber(E[b_ .. '_y']);
+            if x_ and y_ and x_ >= 0 and y_ >= 0 then t[b_ .. '_x'], t[b_ .. '_y'] = math.floor(x_ * kx + 0.5), math.floor(y_ * ky + 0.5); end
+        end
+        if next(t) and YUI_EQ_APPLY then YUI_EQ_APPLY(t); end
+    end);
+    pcall(function()                                                 -- (the Damage Meter - dps.lua: its own size and place)
+        local D = YUI_DPS and YUI_DPS.get and YUI_DPS.get();
+        if type(D) ~= 'table' then return; end
+        D.size = math.floor(math.max(50, math.min(250, (tonumber(D.size) or 100) * k)) + 0.5);
+        if tonumber(D.x) and tonumber(D.y) then YUI_DPS.place(D.x * kx, D.y * ky); else YUI_DPS.save(); end
+    end);
+    WATCH.move = 3;
+end
+function C.res_tick()
+    if cfg.res_follow == false then return; end
+    local R, now = C.RES, os.clock();
+    if now - (R.t or -9) < 0.5 then return; end
+    R.t = now;
+    local w, h = C.res_now();
+    if w < 320 or h < 240 then return; end
+    local ow, oh = tonumber(cfg.res_w) or 0, tonumber(cfg.res_h) or 0;
+    if ow < 320 or oh < 240 then cfg.res_w, cfg.res_h = w, h; pcall(save); return; end   -- (the first time: noted, nothing changes)
+    if math.abs(w - ow) <= 2 and math.abs(h - oh) <= 2 then R.seen = nil; return; end
+    if not R.seen or R.seen[1] ~= w or R.seen[2] ~= h then R.seen = { w, h, now }; return; end   -- (a new size: once it holds for a second - not mid-drag of the window)
+    if now - R.seen[3] < 1.0 then return; end
+    R.seen = nil;
+    C.res_apply(ow, oh, w, h);
+    cfg.res_w, cfg.res_h = w, h;
+    pcall(save);
+    msg(('Resolution %dx%d: the UI resized to match (Size of everything %.2fx). GENERAL > SIZE > Follow the resolution turns this off.'):format(w, h, tonumber(cfg.scale) or 1));
+end
 function C.cliprect(a, b)
     local w, h = C.screen();
     local x1 = math.floor(math.max(0, math.min(w - 1, a[1])));
@@ -323,10 +432,10 @@ function YUI_TIP(t)
             if type(ww) == 'table' then ww = ww.x or ww[1]; end
             local p1, p2 = imgui.GetColorU32({ 1.0, 0.36, 0.62, 0.9 }), imgui.GetColorU32({ 0.62, 0.40, 1.0, 0.9 });
             if hx then
-                p1, p2 = imgui.GetColorU32({ C.GOLDH[1], C.GOLDH[2], C.GOLDH[3], 0.95 }), imgui.GetColorU32({ C.HEXMP[1][1], C.HEXMP[1][2], C.HEXMP[1][3], 0.95 });
+                p1, p2 = u32({ C.GOLDH[1], C.GOLDH[2], C.GOLDH[3], 0.95 }), u32({ YUI_AZ()[1], YUI_AZ()[2], YUI_AZ()[3], 0.95 });
                 DL.RFM(dl, wx + 1, wy + 1, wx + ww - 1, wy + 2, p1, p2, p2, p1);
-                local gc = imgui.GetColorU32({ C.GOLDH2[1], C.GOLDH2[2], C.GOLDH2[3], 1 });
-                if C.hexdot then C.hexdot(dl, wx, wy, 3, gc); C.hexdot(dl, wx + ww, wy, 2.4, imgui.GetColorU32({ C.HEXMP[1][1], C.HEXMP[1][2], C.HEXMP[1][3], 1 })); end
+                local gc = u32({ C.GOLDH2[1], C.GOLDH2[2], C.GOLDH2[3], 1 });
+                if C.hexdot then C.hexdot(dl, wx, wy, 3, gc); C.hexdot(dl, wx + ww, wy, 2.4, u32({ YUI_AZ()[1], YUI_AZ()[2], YUI_AZ()[3], 1 })); end
             else
                 DL.RFM(dl, wx + 6, wy + 1, wx + ww - 6, wy + 2, p1, p2, p2, p1);
             end
@@ -385,7 +494,7 @@ local function load_fonts()
         end
         font = font or add('GOTHIC.TTF', px) or add('segoeui.ttf', px);
         if font then table.insert(fonts.sized.chat, { font, px }); end
-        if font and jp then
+        if font and jp and not (JP.font_has_japanese and JP.font_has_japanese(font)) then   -- [JP]
             pcall(function()
                 local T_ = (imgui.types or vana.imgui.types).ImFontConfig;
                 local c = T_.new();
@@ -1060,10 +1169,13 @@ local function end_plain(kx, ky)
         if c_ == nil or now_ - c_[3] > 1 then c_ = { sw, sh, now_ }; WATCH.calm[kx] = c_;
         else c_[1], c_[2] = math.min(c_[1], sw), math.min(c_[2], sh); end   -- (each second it starts again from now: a real grow is seen)
     end
-    if math.abs(wx - (tonumber(cfg[kx]) or 0)) > 0.5 or math.abs(wy - (tonumber(cfg[ky]) or 0)) > 0.5 then
-        cfg[kx], cfg[ky] = wx, wy;
+    local follow_ = type(kx) == 'string' and kx:sub(1, 1) == '_';   -- (_tx, _sbx: placed every frame by what they follow - never saved: on some
+    if not follow_ and (math.abs(wx - (tonumber(cfg[kx]) or 0)) > 0.5 or math.abs(wy - (tonumber(cfg[ky]) or 0)) > 0.5) then   --  PCs the game set them a hair
+        cfg[kx], cfg[ky] = wx, wy;                                   --  off, and the settings were written to disk every frame - the frame rate fell)
         if EDIT.on then EDIT.drag = kx; end                           -- (Edit Mode: this one is being dragged)
-        if not imgui.IsMouseDown(0) then save(); end
+        if not imgui.IsMouseDown(0) then
+            if os.clock() - (WATCH.saved or 0) > 1 then WATCH.saved = os.clock(); save(); else WATCH.later = true; end   -- (at most once a second)
+        end
     end
     if EDIT.on and EDIT.drag == kx and type(sw) == 'number' then
         local nx, ny, guides = EDIT.snap(kx, wx, wy, sw, sh);
@@ -1279,7 +1391,12 @@ function C.hexbar(dl, x, y, w, h, v, lag, seed, o)
         cy = math.floor(cy - B / 2 + 0.5) + B / 2;
     end
     shape(x - 1, x + w + 1, col({ 0, 0, 0 }, 0.55), nil, 1.5);         -- (a dark rim, readable on snow)
-    shape(x, x + w, col({ 0.07, 0.05, 0.10 }, 0.8));                 -- (the empty part)
+    if o.empty then                                                  -- (o.empty: the missing part in a dark shade of the bar's own colour - the whole
+        local e_ = o.empty;                                          --  bar's length shows, what's missing reads as missing)
+        shape(x, x + w, col({ c1[1] * e_, c1[2] * e_, c1[3] * e_ }, 0.92));
+    else
+        shape(x, x + w, col({ 0.07, 0.05, 0.10 }, 0.8));             -- (the empty part)
+    end
     if live and w > B then                                           -- (the empty part carved in: a shadow under its top edge)
         local k = math.min(B / 2, w / 2);
         local z0, z1 = col({ 0, 0, 0 }, 0.5), col({ 0, 0, 0 }, 0);
@@ -1418,12 +1535,21 @@ function LEAD_MARK(dl, cx, cy, r, alliance, a, style)
         local rr = r * 0.46;
         local step = rr * 2.1;
         local x0 = cx - (n - 1) * step / 2;
-        local g1, g2 = C.GOLDH, C.HEXMP[1];
+        local g1, g2 = C.GOLDH, (YUI_TINT_ON and { 0.96, 0.97, 1.0 } or C.HEXMP[1]);   -- (Void red: red and white)
         for k = 1, n do
             local u = (k - 1) / math.max(1, n - 1);
             local px = x0 + (k - 1) * step;
             C.hexdot(dl, px, cy, rr * 1.12 + 1.2, dark);
             C.hexdot(dl, px, cy, rr * 1.12, U4(g1[1] + (g2[1] - g1[1]) * u, g1[2] + (g2[2] - g1[2]) * u, g1[3] + (g2[3] - g1[3]) * u, a));
+        end
+    elseif style == 'vdots' then                                     -- (one over the other: a turned card's right end)
+        local n = alliance and 3 or 2;
+        local rr = r * 0.46;
+        local y0 = cy - (n - 1) * rr * 1.05;
+        for k = 1, n do
+            local py = y0 + (k - 1) * rr * 2.1;
+            DL.CF(dl, cx, py, rr + 1.2, dark, 16);
+            DL.CF(dl, cx, py, rr, lead_mix((k - 1) / math.max(1, n - 1), a), 16);
         end
     elseif style == 'dots' then
         local n = alliance and 3 or 2;
@@ -1792,7 +1918,7 @@ end
 function BUFFS.off(key) return type(cfg.buffs_off) == 'table' and cfg.buffs_off[key] == true; end
 -- PARTY > Buff timers: your own buffs' time left, as the game's own icons show it (the server tells only yours). The game's
 -- clock in memory (XIUI's way); a timer is in 1/60 s since 2002, wrapping at 32 bits. { [buff id] = seconds }, -1 never ends.
-function C.ptimers(i)                                               -- (PARTY > Buff timers: yours exact; a party member's only for the buffs YOU cast on them)
+function C.ptimers(i)                                               -- (PARTY > Buff timers: yours, and your own other characters' (their YunaUI sends them) - exact)
     if cfg.party_buff_timers == false then return nil; end
     if i == 0 then BUFFS.mine(); return BUFFS.marr; end
     if i >= 6 then return nil; end
@@ -1809,6 +1935,7 @@ function C.ptimers(i)                                               -- (PARTY > 
         end
         return out;
     end
+    if true then return nil; end                                     -- (other players: no timers - the guessed ones kept going wrong; only yours and your own characters')
     local t = BUFFS.cast[sid];
     if not t then return nil; end
     local out, any = {}, false;
@@ -1929,7 +2056,14 @@ function BUFFS.on_ipc(e)
             elseif o.tid == sid and o.buff == nv[1] then
                 table.remove(BUFFS.opend, j);
                 local ol_ = math.floor(nv[2] + (now - o.t) + 0.5);
-                if BUFFS.sane(ol_, o.sp, o.buff) then BUFFS.keep('o' .. tostring(o.sp), ol_); end
+                if BUFFS.sane(ol_, o.sp, o.buff) then
+                    BUFFS.keep('o' .. tostring(o.sp), ol_);
+                    for _, bs in pairs(BUFFS.cast) do                -- (the same cast's timers on the others - a -ra: they had the guess, now the real length)
+                        for _, e in ipairs(bs[o.buff] or {}) do
+                            if e.sp == o.sp and math.abs(e.t0 - o.t) < 4 then e.dur, e.wait = ol_, nil; end
+                        end
+                    end
+                end
                 pcall(BUFFS.learn_factor, o.sp, o.buff, nv[2] + (now - o.t));
                 break;
             end
@@ -2001,7 +2135,7 @@ function BUFFS.learn_from()                                         -- (a spell 
             local Lo = type(cfg.buff_learn) == 'table' and tonumber(cfg.buff_learn['o' .. tostring(spell)]) or nil;   -- (its length on others, if ever seen -
             for _, bs in pairs(BUFFS.cast) do                       --  not BUFFS.learned: that has the length on you just kept, and none was fixed)
                 for _, e in ipairs(bs[buff] or {}) do                -- (the same cast on others - Protectra, a song: it landed on them before
-                    if e.sp == spell and math.abs(e.t0 - t) < 4 and not Lo then e.dur, e.wait = len, nil; end   --  your own length was known, so they had the usual one: now yours)
+                    if e.sp == spell and math.abs(e.t0 - t) < 4 then e.dur, e.wait = Lo or len, nil; end   --  your own length was known, so they had the usual one: now the real one)
                 end
             end
         elseif now - t > 4 then BUFFS.pend[spell] = nil;
@@ -2151,6 +2285,16 @@ local function draw_buffs(dl, x, y, list, size, perrow, rows, dir, timers, fold,
             if BUFFS.ovl then                                        -- (your buffs running out: orange in the last minute, red in the last 20 s)
                 if secs <= 20 then tc_ = { 1.00, 0.36, 0.36, 1 }; elseif secs <= 60 then tc_ = { 1.00, 0.68, 0.24, 1 }; end
             end
+            if BUFFS.ovl and C.HALO then                             -- (a party card's: a soft dark haze behind it, its size following the text's - readable on any ground, no plate)
+                local _, th2_ = imgui.CalcTextSize(str); th2_ = tonumber(th2_) or 10;
+                local r1_, r2_ = math.max(1.5, th2_ * 0.20), math.max(1, th2_ * 0.11);
+                local c1_, c2_ = U4(0, 0, 0, 0.18), U4(0, 0, 0, 0.30);
+                local hx_ = ix + (size - tw) / 2;
+                for _, o in ipairs(C.HALO) do
+                    DL.T(dl, hx_ + o[1] * r1_, ty_ + o[2] * r1_ * 0.85, c1_, str);
+                    DL.T(dl, hx_ + o[1] * r2_, ty_ + o[2] * r2_ * 0.85, c2_, str);
+                end
+            end
             text(dl, ix + (size - tw) / 2, ty_, str, tc_);
             if fit_ then imgui.SetWindowFontScale(BUFFS.ofs); end
         end
@@ -2199,11 +2343,27 @@ end
 -- the 2-hours a monster can use (as a job ability or a mob skill id): debuff_durations.lua's ja table gives their effect
 C.MOB2HR = { [16] = true, [17] = true, [19] = true, [20] = true, [21] = true, [22] = true, [23] = true, [688] = true, [690] = true,
              [691] = true, [692] = true, [693] = true, [694] = true, [695] = true, [696] = true, [730] = true, [1933] = true };
+function C.esrc(id, status, kind, param, actor)                      -- (what put a debuff on a monster: the spell / ability's own name - Gravity, not "weight";
+    local me_ = 0;                                                   --  and whether it was YOU - TIMERS shows only yours)
+    pcall(function() me_ = AshitaCore:GetMemoryManager():GetParty():GetMemberServerId(0) or 0; end);
+    C.EMINE = C.EMINE or {};
+    C.EMINE[tostring(id) .. ':' .. tostring(status)] = (actor ~= nil and actor == me_) or nil;
+    local nm = nil;
+    pcall(function()
+        local rm = AshitaCore:GetResourceManager();
+        if kind == 4 then local r = rm:GetSpellById(param); nm = r and r.Name and r.Name[1];
+        elseif kind == 6 or kind == 14 or kind == 15 then local r = rm:GetAbilityById((param or 0) + 512); nm = r and r.Name and r.Name[1];
+        elseif kind == 3 then local r = rm:GetAbilityById(param or 0); nm = r and r.Name and r.Name[1]; end
+    end);
+    if nm and nm ~= '' then C.ESRC = C.ESRC or {}; C.ESRC[tostring(id) .. ':' .. tostring(status)] = nm; end
+end
 local function enemy_add(id, status, secs)
     if id == nil or id == 0 or status == nil or status <= 0 or status == 255 then return; end
     enemies[id] = enemies[id] or {};
     if status == 134 then enemies[id][135] = nil; elseif status == 135 then enemies[id][134] = nil; end   -- (Dia and Bio overwrite each other)
     enemies[id][status] = os.clock() + (secs or DEBUFF_TIME[status] or 180);
+    C.EFULL = C.EFULL or {};
+    C.EFULL[tostring(id) .. ':' .. tostring(status)] = secs or DEBUFF_TIME[status] or 180;   -- (TIMERS > Debuffs on your target: its bar)
 end
 C.SPIKES = { [1] = 34, [2] = 35, [3] = 173, [5] = 38, [6] = 403 };   -- (a spikes reaction's effect -> its status: Blaze, Ice, Dread, Shock Spikes, Reprisal)
 C.MSG_PHYS = set_of('103,110,185,187,238,242,317,802');              -- (a physical hit: melee, ability or weapon skill)
@@ -2460,15 +2620,14 @@ function FIGHT.on_skill(actor, kind, param, m, tid, ap, first)
         if pre and FIGHT.sc[tid] == pre.st then FIGHT.sc[tid] = old.prev; end
         old = old.prev;
     end
-    local delay = sk.delay or 3;
     if prop and FIGHT.CHAIN[prop] then                               -- it made a skillchain
         local step = ((old and old.step) or 1) + 1;
         local level = FIGHT.CHAIN[prop][1];
         if level == 3 and old and old.property and old.property[1] == prop then level = 4; end
-        FIGHT.sc[tid] = { en = sk.en, property = { prop }, ts = now, dur = 8 - step + delay, wait = delay, step = step,
+        FIGHT.sc[tid] = { en = sk.en, property = { prop }, ts = now, dur = math.max(3, 11 - step), wait = 3, step = step,   -- (the server: 10 s less 1 per chain, next one after 3)
                           closed = (level == 4), chain = prop, elems = FIGHT.CHAIN[prop][2] };
     elseif FIGHT.MSG[m] and (kind ~= 4 or rdy) then                  -- the first step: it opens its own properties (a spell: under Immanence / Chain Affinity)
-        FIGHT.sc[tid] = { en = sk.en, property = sk.skillchain or {}, ts = now, dur = 7 + delay, wait = delay, step = 1 };
+        FIGHT.sc[tid] = { en = sk.en, property = sk.skillchain or {}, ts = now, dur = 10, wait = 3, step = 1 };   -- (the server: 10 s, a chain from 3 s)
     elseif m == 529 then                                             -- "... is chainbound" (SAM Konzen-ittai, DNC Wild Flourish): opens theirs
         FIGHT.sc[tid] = { en = sk.en, property = sk.skillchain or {}, ts = now, dur = 9, wait = 2, step = 1 };
     end
@@ -2627,7 +2786,8 @@ function FIGHT.draw_fan(dl, sid, hx, hy, sc)
     local lh = imgui.GetTextLineHeight();
     local all = ImDrawFlags_RoundCornersAll or ImDrawCornerFlags_All or 15;
     local go = t >= (st.wait or 3);
-    local r = 10 * sc;
+    local hk = math.max(0.5, math.min(2.5, tonumber(cfg.fan_hub) or 1));   -- (TARGET > Fan timer size: the countdown the fan branches off)
+    local r = 10 * sc * hk;
     -- the hub
     if t < 0.6 then                                                  -- a ripple as the chain opens
         local q = t / 0.6;
@@ -2642,7 +2802,7 @@ function FIGHT.draw_fan(dl, sid, hx, hy, sc)
     local seg = 64;                                                  -- the ring: smooth, a glow under it
     local fr = math.max(0, math.min(1, f));
     for pass = 1, 2 do
-        local th, ca = (pass == 1) and 5 or 2.4, (pass == 1) and 0.22 or 1;
+        local th, ca = ((pass == 1) and 5 or 2.4) * math.sqrt(hk), (pass == 1) and 0.22 or 1;
         for k = 0, math.floor(seg * fr) - 1 do
             local a0, a1 = -math.pi / 2 + k / seg * math.pi * 2, -math.pi / 2 + (k + 1.15) / seg * math.pi * 2;   -- (a little overlap: no seams)
             DL.L(dl, hx + math.cos(a0) * r, hy + math.sin(a0) * r, hx + math.cos(a1) * r, hy + math.sin(a1) * r, U4(col[1], col[2], col[3], ca), th);
@@ -2652,7 +2812,7 @@ function FIGHT.draw_fan(dl, sid, hx, hy, sc)
         local secs = math.max(0, math.ceil(go and (st.dur - t) or ((st.wait or 3) - t)));
         local str = tostring(secs);
         local fs0 = FS or 1;
-        imgui.SetWindowFontScale(fs0 * 0.62);
+        imgui.SetWindowFontScale(fs0 * 0.62 * hk);
         local tw_, th_ = imgui.CalcTextSize(str);
         text(dl, math.floor(hx - tw_ / 2 + 0.5), math.floor(hy - th_ * 0.397 + 0.5), str, { col[1] * 0.3 + 0.7, col[2] * 0.3 + 0.7, col[3] * 0.3 + 0.7, 1 });   -- (the digits' own middle sits at 0.397 of the line in this font)
         imgui.SetWindowFontScale(fs0);
@@ -2677,7 +2837,7 @@ function FIGHT.draw_fan(dl, sid, hx, hy, sc)
         pcall(function() dl:PopClipRect(); end);
         return true;
     end
-    local R = 70 * sc;
+    local R = 70 * sc + (r - 10 * sc);                               -- (a bigger timer: the cards start further out)
     local a0 = math.rad(158);                                        -- the first one: left and a little down
     local da = math.rad(n > 1 and math.min(14, 46 / (n - 1)) or 0);   -- each next one further down (down-left, not straight left)
     do                                                               -- (its full size once open, for the guide)
@@ -2946,10 +3106,15 @@ function FIGHT.fan_size(sc) return 420 * sc, 260 * sc; end
 function FIGHT.preview(id)
     id = id or -1;
     local now = os.clock();
-    local t0 = now - (now % 6);
+    local cyc = now % 14;
+    local t0 = now - cyc;
     FIGHT.casts[id] = { name = 'Firaga III', t0 = t0, dur = 4, kind = 'spell', tid = 0, pretend = true };
-    FIGHT.sc[id] = { en = 'Savage Blade', property = { 'Fusion' }, ts = t0, dur = 8, wait = 2, step = 2, chain = 'Fusion',
-                     elems = { 'Fire', 'Light' }, pretend = true };
+    if cyc < 5 then                                                  -- (the opener: GET READY, then CHAIN NOW / START CASTING)
+        FIGHT.sc[id] = { en = 'Red Lotus Blade', property = { 'Liquefaction' }, ts = t0, dur = 10, wait = 3, step = 1, pretend = true };
+    else                                                             -- (the chain: MAGIC BURST and its 9 s)
+        FIGHT.sc[id] = { en = 'Savage Blade', property = { 'Fusion' }, ts = t0 + 5, dur = 9, wait = 3, step = 2, chain = 'Fusion',
+                         elems = { 'Fire', 'Light' }, pretend = true };
+    end
 end
 -- TARGET > "Show them to place them": while it's on, the fan, the Magic Burst line and the enemy cast show all the time
 -- (on a pretend target when you have none), so you can see where they sit
@@ -3096,15 +3261,15 @@ local function read_action(e)
             if bits(1) == 1 then                                    -- spikes: the one hit has them - a monster's shown even when its cast was missed
                 local sa = bits(10); bits(14); bits(10);             --  (cast before you came, or out of range: the server never lists its buffs)
                 local sst = C.SPIKES[sa];
-                if sst and not is_party_id(tid) and (enemies[tid] == nil or (enemies[tid][sst] or 0) < os.clock() + 60) then enemy_add(tid, sst, 60); end
+                if sst and not is_party_id(tid) and (enemies[tid] == nil or (enemies[tid][sst] or 0) <= os.clock()) then enemy_add(tid, sst, 180); end   -- (seen by its reaction: put on once, its timer left running - each hit reset it)
             end
             if max == 0 then return; end
             if (m == 230 or m == 266) and kind == 4 then pcall(BUFFS.cast_on, actor, tid, p, param); end   -- (a buff you cast landed: PARTY > Buff timers on their card)
             if not is_party_id(tid) then pcall(C.ja_hit, tid, kind, param, m); end
-            if MSG_ON[m] then enemy_add(tid, p, debuff_secs(kind, param, p));
+            if MSG_ON[m] then enemy_add(tid, p, debuff_secs(kind, param, p)); pcall(C.esrc, tid, p, kind, param, actor);
             elseif MSG_OFF[m] then enemy_off(tid, p);
             elseif MSG_DEATH[m] then enemies[tid] = nil;
-            elseif kind == 4 and MSG_SPELLDMG[m] and SPELL_DEBUFF[param] then enemy_add(tid, SPELL_DEBUFF[param], debuff_secs(4, param, SPELL_DEBUFF[param])); end
+            elseif kind == 4 and MSG_SPELLDMG[m] and SPELL_DEBUFF[param] then enemy_add(tid, SPELL_DEBUFF[param], debuff_secs(4, param, SPELL_DEBUFF[param])); pcall(C.esrc, tid, SPELL_DEBUFF[param], 4, param, actor); end
         end
     end
 end
@@ -3364,7 +3529,9 @@ function C.thead(idx, ent, sc)
     pcall(function()
         local px, py, pz, obj = C.tpos(idx, ent);
         if px == nil then return; end
-        sx, sy = C.w2s(px, pz - (obj and 0.8 or C.tall(idx, ent)), py);   -- (a door / object: a little over its own point)
+        local th_ = obj and 0.8 or C.tall(idx, ent);
+        if th_ > 4.5 then th_ = 4.5 + (th_ - 4.5) * 0.35; end         -- (a huge monster - a dragon, 8.5 yalms: the bar lower, by its body, not far over its head)
+        sx, sy = C.w2s(px, pz - th_, py);                             -- (a door / object: a little over its own point)
     end);
     local W, H = C.screen();
     if not sx or sx < -40 or sx > W + 40 or sy > H + 40 then C.TH = nil; return nil; end
@@ -3484,13 +3651,14 @@ function FIGHT.ps_alt(sid, st, t)
     end
     local LVC = { 0.96, 0.92, 0.82 };
     local function lv(o) return 'Lv. ' .. tostring(o[3] or 1); end   -- (the skillchain's level: 1, 2, 3 - 4 for a double Light / Darkness)
-    local function mbline(cy_, a)                                    -- (the element gems, MAGIC BURST, the chain's name - centred)
-        local pc = FIGHT.PCOL[st.chain] or WH;
+    local function mbline(cy_, a)                                    -- (after a chain: the elements to burst with, then - small - the next weapon skill's moment)
         local m = #(st.elems or {});
         local gw = m * 14 * s_;
-        local w1 = wid('MAGIC BURST', 9 * s_, 2 * s_);
-        local w2 = wid(tostring(st.chain), 12 * s_);
-        local tot = gw + 8 * s_ + w1 + 8 * s_ + w2;
+        local ew, etot = {}, 0;
+        for k, e in ipairs(st.elems or {}) do ew[k] = wid(e, 15 * s_); etot = etot + ew[k] + ((k < m) and 10 * s_ or 0); end
+        local nx = (not st.closed) and ('NEXT WS  ' .. (go and 'CHAIN NOW' or ('GET READY ' .. tostring(secs)))) or nil;
+        local w2 = nx and wid(nx, 10 * s_, 1.5 * s_) or 0;
+        local tot = gw + 8 * s_ + etot + (nx and (24 * s_ + w2) or 0);
         local x_ = mx - tot / 2;
         for k, e in ipairs(st.elems or {}) do
             local ec = FIGHT.ELEM[e] or WH;
@@ -3500,40 +3668,60 @@ function FIGHT.ps_alt(sid, st, t)
             C.hexdot(fg, gx, cy_, 5 * s_ * u, c32(ec, a));
             if u < 1 then C.hexring(fg, gx, cy_, 5 * s_ + (1 - u) * 8 * s_, c32(ec, a * (1 - u)), 1.5); end
         end
-        local _, h1 = wid('A', 9 * s_);
-        local _, h2 = wid('A', 12 * s_);
-        local ua = a * cl01((t - 0.5) / 0.3);
-        txt('MAGIC BURST', 9 * s_, x_ + gw + 8 * s_, cy_ - h1 / 2, { 0.98, 0.94, 0.86 }, ua, 2 * s_);
-        txt(show(tostring(st.chain), (t - 0.5) / 0.3, 77), 12 * s_, x_ + gw + 8 * s_ + w1 + 8 * s_, cy_ - h2 / 2, { pc[1] * 0.4 + 0.6, pc[2] * 0.4 + 0.6, pc[3] * 0.4 + 0.6 }, ua);
+        local _, h1 = wid('A', 15 * s_);
+        local _, h2 = wid('A', 10 * s_);
+        local ua = a * cl01((t - 0.3) / 0.3);
+        local ex = x_ + gw + 8 * s_;
+        for k, e in ipairs(st.elems or {}) do                        -- (each element's name in its colour)
+            local ec = FIGHT.ELEM[e] or WH;
+            txt(e, 15 * s_, ex, cy_ - h1 / 2, { ec[1] * 0.5 + 0.5, ec[2] * 0.5 + 0.5, ec[3] * 0.5 + 0.5 }, ua);
+            ex = ex + ew[k] + 10 * s_;
+        end
+        if nx then
+            local xd = x_ + gw + 8 * s_ + etot + 12 * s_;
+            C.hexdot(fg, xd, cy_, 2 * s_, c32(gold, 0.85 * ua));
+            txt(nx, 10 * s_, xd + 12 * s_, cy_ - h2 / 2, go and gold or rose, ua * 0.9, 1.5 * s_);
+        end
     end
-    local state = go and 'CHAIN NOW' or 'GET READY';
+    local function castline(cy_, a)                                  -- (before the chain, once the closer can go: a nuke started now lands in the burst)
+        local s0 = 'START CASTING';
+        local w = wid(s0, 14 * s_, 3 * s_);
+        local _, h = wid('A', 14 * s_);
+        txt(s0, 14 * s_, mx - w / 2, cy_ - h / 2, gold, a * (0.75 + 0.25 * math.sin(now * 6)), 3 * s_);
+    end
+    local burst = mb_on and true or false;                           -- (a chain went off: it's the mages' moment - MAGIC BURST on top, its seconds, its lines)
+    local bleft = math.max(0, st.dur - t);
+    local hc = burst and gold or col;
+    local fr_ = burst and cl01(bleft / math.max(0.1, st.dur)) or frac;
+    local cast_on = (not burst) and go and cfg.show_mb ~= false and not st.closed;
+    local state = burst and 'MAGIC BURST' or (go and 'CHAIN NOW' or 'GET READY');
     do
         local y_ = 22 * s_ - (1 - inn) * 14 * s_ + (FIGHT.psy or OY);   -- (FIGHT.psy: the guide's slide moves it down)
         local title = st.chain and tostring(st.chain):upper() or 'SKILLCHAIN';
         local tc = st.chain and (FIGHT.PCOL[st.chain] or WH) or col;
-        local sp = (6 + 18 * (1 - inn)) * s_;                         -- (tracking in: the letters close up as it arrives)
+        local sp = (4 + 14 * (1 - inn)) * s_;                         -- (tracking in: the letters close up as it arrives)
         local _, hs = wid('A', 10 * s_);
-        local ss_ = tostring(secs);
+        local ss_ = burst and string.format('%.1f', bleft) or tostring(secs);
         local nw_, nh_ = wid(ss_, 24 * s_);                          -- (the seconds: big, beside the small CHAIN NOW / GET READY)
         local sw = wid(state, 10 * s_, 2 * s_);
         local lx_ = mx - (sw + 8 * s_ + nw_) / 2;
         y_ = y_ - (nh_ - hs) * 0.5;
-        txt(state, 10 * s_, lx_, y_ + (nh_ - hs) * 0.62, col, A * pulse, 2 * s_);
+        txt(state, 10 * s_, lx_, y_ + (nh_ - hs) * 0.62, hc, A * pulse, 2 * s_);
         txt(ss_, 24 * s_, lx_ + sw + 8 * s_ + 1.5, y_ + 1.5, { 0, 0, 0 }, A * 0.5);
-        txt(ss_, 24 * s_, lx_ + sw + 8 * s_, y_, { col[1] * 0.4 + 0.6, col[2] * 0.4 + 0.6, col[3] * 0.4 + 0.6 }, A);
+        txt(ss_, 24 * s_, lx_ + sw + 8 * s_, y_, { hc[1] * 0.4 + 0.6, hc[2] * 0.4 + 0.6, hc[3] * 0.4 + 0.6 }, A);
         local ty_ = y_ + nh_ + 1 * s_;
-        local tw_, th_ = wid(title, 30 * s_, sp);
-        txt(title, 30 * s_, mx - tw_ / 2 + 2, ty_ + 2, { 0, 0, 0 }, A * 0.45, sp);   -- (a soft shadow)
-        txt(title, 30 * s_, mx - tw_ / 2, ty_, { tc[1] * 0.3 + 0.7, tc[2] * 0.3 + 0.7, tc[3] * 0.3 + 0.7 }, A, sp);
+        local tw_, th_ = wid(title, 22 * s_, sp);
+        txt(title, 22 * s_, mx - tw_ / 2 + 2, ty_ + 2, { 0, 0, 0 }, A * 0.45, sp);   -- (a soft shadow)
+        txt(title, 22 * s_, mx - tw_ / 2, ty_, { tc[1] * 0.3 + 0.7, tc[2] * 0.3 + 0.7, tc[3] * 0.3 + 0.7 }, A, sp);
         local ly = ty_ + th_ * 0.52;                                  -- (the time: a line each side, shrinking in towards the name)
-        local L = 170 * s_ * frac * inn;
+        local L = 170 * s_ * fr_ * inn;                               -- (after a chain: the burst's seconds draining)
         for _, dir in ipairs({ -1, 1 }) do
             local x0_ = mx + dir * (tw_ / 2 + 12 * s_);
             local x1_ = x0_ + dir * L;
             DL.L(fg, x0_, ly, x1_, ly, c32({ 0, 0, 0 }, 0.5 * A), 3.5);
-            DL.L(fg, x0_, ly, x1_, ly, c32(col, A * pulse), 1.5);
+            DL.L(fg, x0_, ly, x1_, ly, c32(hc, A * pulse), 1.5);
             C.hexdot(fg, x1_, ly, 3 * s_, c32(WH, A));
-            C.hexring(fg, x0_ + dir * 6 * s_ * 0, ly, 2.5 * s_, c32(col, A * 0.6), 1);
+            C.hexring(fg, x0_ + dir * 6 * s_ * 0, ly, 2.5 * s_, c32(hc, A * 0.6), 1);
         end
         local oy = ty_ + th_ + 6 * s_;                                -- (the weapon skills, in one line)
         FIGHT.bnhw = 0;
@@ -3541,34 +3729,34 @@ function FIGHT.ps_alt(sid, st, t)
             local parts, tot = {}, 0;
             for i = 1, n do
                 local o = opts[i];
-                local w1, w2, w3 = wid(o[1], 12 * s_), wid(o[2], 11 * s_), wid(lv(o), 9 * s_);
+                local w1, w2, w3 = wid(tostring(o[1]):upper(), 17 * s_), wid(o[2], 15 * s_), wid(lv(o), 12 * s_);
                 parts[i] = { w1, w2, w3 };
-                tot = tot + w1 + 6 * s_ + w2 + 4 * s_ + w3 + ((i < n) and 22 * s_ or 0);
+                tot = tot + w1 + 7 * s_ + w2 + 5 * s_ + w3 + ((i < n) and 26 * s_ or 0);
             end
             local x_ = mx - tot / 2;
             FIGHT.bnhw = tot / 2;
-            local _, h1 = wid('A', 12 * s_);
+            local _, h1 = wid('A', 17 * s_);
             for i = 1, n do
                 local o, pw = opts[i], parts[i];
                 local pc = FIGHT.PCOL[o[2]] or WH;
                 local best = go and i == 1 and (o[3] or 0) >= 3;
                 local u = ease((t - 0.2 - 0.08 * i) / 0.3);
-                txt(show(o[1], (t - 0.2 - 0.08 * i) / 0.35, i * 10), 12 * s_, x_, oy, best and gold or WH, A * u);
-                txt(o[2], 11 * s_, x_ + pw[1] + 6 * s_, oy + 1 * s_, pc, A * u);
-                txt(lv(o), 9 * s_, x_ + pw[1] + 6 * s_ + pw[2] + 4 * s_, oy + 3 * s_, LVC, A * u);
+                txt(show(tostring(o[1]):upper(), (t - 0.2 - 0.08 * i) / 0.35, i * 10), 17 * s_, x_, oy, best and gold or { 0.93, 0.80, 0.62 }, A * u);   -- (names: soft champagne, the best one gold - not white)
+                txt(o[2], 15 * s_, x_ + pw[1] + 7 * s_, oy + 1.5 * s_, pc, A * u);
+                txt(lv(o), 12 * s_, x_ + pw[1] + 7 * s_ + pw[2] + 5 * s_, oy + 3.5 * s_, LVC, A * u);
                 if best then DL.L(fg, x_, oy + h1 + 1, x_ + pw[1], oy + h1 + 1, c32(gold, A * u * (0.6 + 0.4 * math.sin(now * 4))), 1.5); end
-                x_ = x_ + pw[1] + 6 * s_ + pw[2] + 4 * s_ + pw[3];
+                x_ = x_ + pw[1] + 7 * s_ + pw[2] + 5 * s_ + pw[3];
                 if i < n then
-                    C.hexdot(fg, x_ + 11 * s_, oy + h1 * 0.55, 3 * s_, c32({ 0, 0, 0 }, 0.7 * A * u));
-                    C.hexdot(fg, x_ + 11 * s_, oy + h1 * 0.55, 2 * s_, c32(gold, 0.85 * A * u));
-                    x_ = x_ + 22 * s_;
+                    C.hexdot(fg, x_ + 13 * s_, oy + h1 * 0.55, 3 * s_, c32({ 0, 0, 0 }, 0.7 * A * u));
+                    C.hexdot(fg, x_ + 13 * s_, oy + h1 * 0.55, 2 * s_, c32(gold, 0.85 * A * u));
+                    x_ = x_ + 26 * s_;
                 end
             end
             oy = oy + h1 + 8 * s_;
         end
-        if mb_on then mbline(oy + 8 * s_, A); end
+        if mb_on then mbline(oy + 10 * s_, A); elseif cast_on then castline(oy + 10 * s_, A); end
         local half_ = math.max(tw_ / 2 + 190 * s_, 300 * s_);
-        FIGHT.drawn.bn = { mx - half_, y_ - 4, half_ * 2, (oy + (mb_on and 22 * s_ or 0)) - y_ + 8, os.clock() };   -- (for the guide's box)
+        FIGHT.drawn.bn = { mx - half_, y_ - 4, half_ * 2, (oy + ((mb_on or cast_on) and 30 * s_ or 0)) - y_ + 8, os.clock() };   -- (for the guide's box)
     end
     if EDIT.on and not FIGHT.psy then pcall(FIGHT.bn_drag, fg); end     -- (Edit Mode: drag it anywhere)
 end
@@ -3808,11 +3996,11 @@ end
 -- 87% down each frame). tx, ty: where its point goes; Z: the frame's size; side: laid down, pointing right
 function C.prism(dl, tx, ty, Z, side, a)
     local jc = C.myjobcol and C.myjobcol();
-    local t = tex('prism_gold.png');                                 -- (the gold prism: Hex link's)
+    local t = tex(YUI_TINT_ON and 'prism_white.png' or 'prism_gold.png');   -- (the gold prism: Hex link's; Void red: the white one, in red)
     if t == nil then return; end
     local f = math.floor(os.clock() * 12) % 16;
     local u0, u1 = f / 16, (f + 1) / 16;
-    local col = u32({ 1, 1, 1, a or 1 });                            -- (white, tinted nothing)
+    local col = YUI_TINT_ON and U4(1, 0.32, 0.36, a or 1) or u32({ 1, 1, 1, a or 1 });   -- (white, tinted nothing; Void red: red)
     if not side then
         local x0, y0 = tx - Z / 2, ty - Z * 0.87;
         pcall(function() DL.I(dl, t.ptr, x0, y0, x0 + Z, y0 + Z, u0, 0, u1, 1, col); end);
@@ -4898,16 +5086,19 @@ end
 -- Edit Mode: where a piece of size w x h at (x, y) should snap. Lines up its left / middle / right (and top / middle /
 -- bottom) with the other pieces' and with the screen's middle when within 10 px; otherwise the 8 px grid.
 EDIT.NAMES = { target_x = 'Target', sub_x = 'Sub-target', enemy_x = 'Enemies', party_x = 'Party', alliance_x = 'Alliance 1',
-               ally2_x = 'Alliance 2', exp_x = 'Exp', gil_x = 'Gil', bag_x = 'Bag', cast_x = 'Cast bar', timer_x = 'Timers',
+               ally2_x = 'Alliance 2', exp_x = 'Exp', gil_x = 'Gil', bag_x = 'Bag', cast_x = 'Cast bar', timer_x = 'Timers', mobt_x = 'Debuff timers',
                pet_x = 'Pet', doll_x = 'Equipment', strip_x = 'Gear strip', logo_x = 'Logo', mini_x = 'Logo',
                fan_x = 'Skillchain fan', ecast_x = 'Enemy cast', tn_x = 'Target name', mb_x = 'Magic Burst', fo_x = 'Skillchain', co_x = 'Enemy cast',
                loot_x = 'Treasure pool', mi_x = 'Monster info' };
 EDIT.HEXOFF = { mi_x = true, tn_x = true, mb_x = true, fo_x = true, co_x = true, fan_x = true, ecast_x = true, sub_x = true };   -- (Hex link: these follow the
-function EDIT.listed(k) return EDIT.NAMES[k] and not (cfg.target_fx == 'link' and EDIT.HEXOFF[k]); end       --  target bar or the top - not placed)
+function EDIT.listed(k)
+    if k == 'mobt_x' and not (cfg.timers_mob == true and cfg.timers_mob_sep == true) then return false; end   -- (the Debuff timers window: only while it's on)
+    return EDIT.NAMES[k] and not (cfg.target_fx == 'link' and EDIT.HEXOFF[k]);
+end       --  target bar or the top - not placed)
 EDIT.SIZE = { target_x = { 'target_scale', 0.6, 2.0 }, sub_x = { 'sub_scale', 0.6, 2.0 }, enemy_x = { 'enemy_scale', 0.6, 2.0 },
               party_x = { 'party_scale', 0.6, 2.0 }, alliance_x = { 'ally1_scale', 0.6, 2.0 }, ally2_x = { 'ally2_scale', 0.6, 2.0 },
               exp_x = { 'exp_scale', 0.5, 2.5 }, gil_x = { 'gb_scale', 0.5, 2.5 }, bag_x = { 'gb_scale', 0.5, 2.5 },
-              cast_x = { 'cast_scale', 0.6, 2.0 }, timer_x = { 'timers_scale', 0.6, 2.0 }, pet_x = { 'pet_scale', 0.6, 2.0 },
+              cast_x = { 'cast_scale', 0.6, 2.0 }, timer_x = { 'timers_scale', 0.6, 2.0 }, mobt_x = { 'timers_scale', 0.6, 2.0 }, pet_x = { 'pet_scale', 0.6, 2.0 },
               loot_x = { 'loot_scale', 0.6, 2.0 }, fan_x = { 'fan_scale', 0.4, 2.0 }, fo_x = { 'fan_scale', 0.4, 2.0 },
               ecast_x = { 'ecast_scale', 0.4, 2.0 }, co_x = { 'ecast_scale', 0.4, 2.0 }, mb_x = { 'mb_scale', 0.5, 2.5 },
               tn_x = { 'target_name_scale', 0.5, 2.5 }, mi_x = { 'mob_icon_scale', 0.5, 3.0 } };
@@ -5791,10 +5982,13 @@ end
 function ALLY.sbh(sc) return math.max(1, math.floor(3 * sc * math.max(0.5, math.min(3, tonumber(cfg.party_hp_th) or 1)) + 0.5)); end   -- (PARTY > HP bar thickness)
 function ALLY.hexrows() return YUI_HEX and true or false; end    -- (Hex link: always the Hex plates - the cards are Normal mode's)
 function ALLY.ch(lh, sc, party)
-    if ALLY.hexrows() then return lh + (party and 22 or 16) * sc; end   -- (Hex link plates: the name, the HP bar, the MP bar)
-    local m = math.max(0.7, math.min(1.3, tonumber(cfg.card_h) or 1));
+    local m = ALLY.ALLB and math.max(0.7, math.min(1.6, tonumber(cfg.card_h) or 1)) or 1;   -- (PARTY > Card height: while the cards are turned only)
+    if ALLY.hexrows() then
+        if cfg.turn_look == 'bare' and ALLY.ALLB then return (lh + 18 * sc) * m; end   -- (all turned, no frame: closer together)
+        return (lh + 22 * sc) * m;                                    -- (the alliances' plates as tall as the party's: the same bars everywhere)
+    end
     if (cfg.card_style or 'plate') ~= 'filled' then
-        local bars = ALLY.sbh(sc) + (party and (2 * sc + math.max(2, math.floor(2.2 * sc + 0.5))) or 0);
+        local bars = ALLY.sbh(sc) + 2 * sc + math.max(2, math.floor(2.2 * sc + 0.5));   -- (the MP line: the alliances' too)
         return math.max(lh + bars + 3 * sc, (lh + bars + 6 * sc) * m);
     end
     return math.max(lh + (party and 7 or 2) * sc, (lh + (party and 11 or 8) * sc) * m);
@@ -5820,13 +6014,19 @@ function C.hpwarn(m, hp)
 end
 -- Hex link: the HP bar itself as a heat scale (the frames are gold - a yellow edge was lost on them): pale gold above 75%,
 -- orange under it, deep red-orange under 50%, red beating under 25% (the card's low HP). { light end, dark end } or nil
+function C.LOWC(k)                                                   -- (the low-HP warning's colour: red - the same with Void red, as Gold's)
+    return (k == 1) and { 1, 0.55, 0.56 } or { 1, 0.30, 0.34 };
+end
 function C.hpheat(m, hp)
     local w = C.hpwarn(m, hp);
     if w == nil then                                                 -- (75% and over: a pale, light gold - so the steps after it stand out)
+        if (cfg.hex_hp_color or 'gold') ~= 'gold' then return nil; end   -- (HP bar colour picked: full HP in that colour, not the pale gold)
         if cfg.card_low ~= false and m and m.inzone and (hp or 0) >= 0.75 and not C.jobcol(m) then return { 1.0, 0.86, 0.50 }, { 0.94, 0.68, 0.26 }; end
         return nil;
     end
-    if hp < 0.50 then return { 1.0, 0.34, 0.16 }, { 0.80, 0.12, 0.05 }; end   -- (under 50%: deep red-orange)
+    if hp < 0.50 then
+        return { 1.0, 0.34, 0.16 }, { 0.80, 0.12, 0.05 };              -- (under 50%: deep red-orange)
+    end
     return { 1.0, 0.62, 0.16 }, { 0.95, 0.40, 0.04 };                -- (under 75%: strong orange)
 end
 -- PARTY > Buffs per row: more buffs than that wrap onto a second (or third) row beside the card, the icons made
@@ -5883,6 +6083,7 @@ function ALLY.tag(dl, m, i, x, ny, ch, sc, v, live, mir, cap)       -- (mir: x i
     local jw, jh = imgui.CalcTextSize(job);
     jh = tonumber(jh) or 10;
     local th = math.floor(math.min(ch * 0.78, jh + 6 * sc) + 0.5);
+    if ALLY.tagh then th = math.floor(ALLY.tagh + 0.5); end          -- (ALLY.tagh: a set height - a turned plate's tag as tall as the name's capitals)
     local s = th * 0.30;
     local tw = math.floor(math.max(jw, imgui.CalcTextSize('WHM')) + 12 * sc + s);   -- (all the same width, so the names line up)
     if mir then x = x - tw; end
@@ -5903,6 +6104,12 @@ function ALLY.tag(dl, m, i, x, ny, ch, sc, v, live, mir, cap)       -- (mir: x i
     local y0 = ny - th / 2 - 1.5 * sc * h - bump;
     local pts = { { x, y0 }, { x + tw, y0 }, { x + tw - s, y0 + th }, { x, y0 + th } };
     local jx = x + (tw - s - jw) / 2 + 1 * sc;
+    if ALLY.tagl then                                                -- (ALLY.tagl: its left side at 45 degrees, leaning right - the plate's cut's slant)
+        local ln = th;
+        tw = tw + ln * 0.6;
+        pts = { { x + ln, y0 }, { x + tw, y0 }, { x + tw - s, y0 + th }, { x, y0 + th } };
+        jx = x + (tw - s + ln - jw) / 2;
+    end
     if mir then pts, jx = { { x + s, y0 }, { x + tw, y0 }, { x + tw, y0 + th }, { x, y0 + th } }, x + s + (tw - s - jw) / 2; end
     if cap then                                                      -- (the plate's end: its right side straight, its foot's corner cut as the
         local lift = ny - th / 2 - y0;                               --  plate's; [1] / [2] its top and foot (else its own height), [4] its left
@@ -5910,6 +6117,7 @@ function ALLY.tag(dl, m, i, x, ny, ch, sc, v, live, mir, cap)       -- (mir: x i
         local kc = math.min(cap[3] or 0, th * 0.45);
         local ln = th * (cap[4] or 0);
         pts = { { x + ln, y0 }, { x + tw, y0 }, { x + tw, y0 + th - kc }, { x + tw - kc, y0 + th }, { x, y0 + th } };
+        if kc < 0.5 then pts = { { x + ln, y0 }, { x + tw, y0 }, { x + tw, y0 + th }, { x, y0 + th } }; end   -- (no cut corner: no doubled point - a faded tag showed a seam)
         jx = x + (tw + ln * 0.5 - kc * 0.4 - jw) / 2;
     end
     local f, ink = tc[1], tc[2];
@@ -5927,13 +6135,25 @@ function ALLY.tag(dl, m, i, x, ny, ch, sc, v, live, mir, cap)       -- (mir: x i
     end
     if fl and fl.back then                                           -- the back: the lot (gold for the highest, grey for a pass)
         ALLY.poly(dl, pts, U4(f[1], f[2], f[3], v));
-        if ta > 0.01 then DL.T(dl, jx, y0 + (th - jh) / 2, U4(ink[1], ink[2], ink[3], v * ta), job); end
+        if ta > 0.01 then DL.T(dl, jx, y0 + (th - jh) / 2 + (ALLY.tagdy or 0), U4(ink[1], ink[2], ink[3], v * ta), job); end
     elseif (cfg.tag_look or 'role') == 'black' then                 -- (PARTY > CARDS > Job tags: black, the job in white with a dark edge)
         ALLY.poly(dl, pts, U4(0.035, 0.03, 0.045, 0.92 * v * dim));
-        if ta > 0.01 then text(dl, jx, y0 + (th - jh) / 2, job, { 1, 1, 1, v * dim * ta }); end
+        if ta > 0.01 then text(dl, jx, y0 + (th - jh) / 2 + (ALLY.tagdy or 0), job, { 1, 1, 1, v * dim * ta }); end
     else
-        ALLY.poly(dl, pts, U4(f[1], f[2], f[3], v * dim));      -- (one flat colour: no sheen, no outline)
-        if ta > 0.01 then DL.T(dl, jx, y0 + (th - jh) / 2, U4(ink[1], ink[2], ink[3], v * ta), job); end
+        do local t_ = YUI_TINT_ON; YUI_TINT_ON = false; ALLY.poly(dl, pts, U4(f[1], f[2], f[3], v * dim)); YUI_TINT_ON = t_; end   -- (one flat colour; a job's own, never tinted)
+        if ALLY.tagol then                                            -- (ALLY.tagol: a black outline round it - one closed line, so its sharp corners join, no notch)
+            local olc_ = U4(0, 0, 0, 0.95 * v);
+            for q = 1, #pts do                                       -- (each side a touch longer at both ends: the sides overlap at the corners)
+                local a_, b_ = pts[q], pts[q % #pts + 1];
+                local dx_, dy_ = b_[1] - a_[1], b_[2] - a_[2];
+                local ln_ = math.sqrt(dx_ * dx_ + dy_ * dy_);
+                if ln_ > 0.01 then
+                    local ex_, ey_ = dx_ / ln_ * 0.9, dy_ / ln_ * 0.9;
+                    DL.L(dl, a_[1] - ex_, a_[2] - ey_, b_[1] + ex_, b_[2] + ey_, olc_, 1.6);
+                end
+            end
+        end
+        if ta > 0.01 then DL.T(dl, jx, y0 + (th - jh) / 2 + (ALLY.tagdy or 0), U4(ink[1], ink[2], ink[3], v * ta), job); end
     end
     imgui.SetWindowFontScale(fs0);
     if mir then return x, s; end
@@ -5982,8 +6202,8 @@ function ALLY.slim(dl, m, i, x1, tip, ny, ch, lh, sc, v, party, live)
         for k = 1, #pts do dl:AddLine(pts[k], pts[k % #pts + 1], U4(1.0, 0.32, 0.36, (0.45 + 0.55 * beat) * v), 1.3); end
     end
     local bh = ALLY.sbh(sc);
-    local mph = party and math.max(1, math.floor(2.2 * sc * math.max(0.5, math.min(3, tonumber(cfg.party_mp_th) or 1)) + 0.5)) or 0;   -- (PARTY > MP bar thickness)
-    local block = lh + 1 * sc + bh + (party and (2 * sc + mph) or 0);
+    local mph = math.max(1, math.floor(2.2 * sc * math.max(0.5, math.min(3, tonumber(cfg.party_mp_th) or 1)) + 0.5));   -- (PARTY > MP bar thickness - the alliances' MP too)
+    local block = lh + 1 * sc + bh + 2 * sc + mph;
     local top = y1 + (ch - block) * 0.45;
     local tx;
     local bx1 = bare and (tip - 2 * sc) or (tip - g.inr - 3 * sc);
@@ -6073,7 +6293,7 @@ function ALLY.slim(dl, m, i, x1, tip, ny, ch, lh, sc, v, party, live)
     if not YUI_HEX then local a_, b_ = C.hpheatN(m, hp); if a_ then c1, c2 = a_, b_; end end   -- (Normal: silver, yellow, orange, red as HP drops)
     if cfg.card_low ~= false and hp < 0.25 then                      -- low HP: the line beats red
         local q = 0.5 + 0.5 * math.sin(os.clock() * 6 + i);
-        local function red(c) return { c[1] + (1.0 - c[1]) * q, c[2] + (0.30 - c[2]) * q, c[3] + (0.34 - c[3]) * q }; end
+        local function red(c) return { c[1] + (1.0 - c[1]) * q, c[2] + (C.LOWC()[2] - c[2]) * q, c[3] + (C.LOWC()[3] - c[3]) * q }; end
         c1, c2 = red(c1), red(c2);
     end
     local hy = top + lh + 1 * sc;
@@ -6081,11 +6301,13 @@ function ALLY.slim(dl, m, i, x1, tip, ny, ch, lh, sc, v, party, live)
     local dt = imgui.GetIO().DeltaTime or 0.016;
     glow_bar(dl, tx, hy, bw, bh, hp, lagged('sl' .. i, hp, dt), c1, c2, i);
     bar_overlay(tx, hy, bw * hp, bh, bar_fx_for(party and 'party' or 'alliance'), i);
-    if party then                                                    -- the MP line
+    do                                                               -- the MP line (the alliances too)
         local my = hy + bh + 2 * sc;
         local mpp = math.max(0, math.min(1, m.mpp or 0));
         DL.RF(dl, tx, my, tx + bw, my + mph, U4(0, 0, 0, 0.45 * v), mph / 2);
-        if mpp > 0 then DL.RF(dl, tx, my, tx + math.max(mph, bw * mpp), my + mph, u32(YUI_HEX and { C.HEXMP[1][1], C.HEXMP[1][2], C.HEXMP[1][3], 0.95 * v } or { 0.45, 0.62, 1.0, 0.95 * v }), mph / 2); end
+        if mpp > 0 then DL.RF(dl, tx, my, tx + math.max(mph, bw * mpp), my + mph, u32(YUI_HEX and { C.HEXMP[1][1], C.HEXMP[1][2], C.HEXMP[1][3], 0.95 * v } or { 0.80, 0.50, 1.0, 0.95 * v }), mph / 2); end
+    end
+    if party then
         local tp = tonumber(m.tp) or 0;                              -- the TP, in its column: a tiny "TP" over the number
         local cx = bx1 + 6 * sc + (tpc - 6 * sc) / 2;
         imgui.SetWindowFontScale((FS or 1) * 0.80 * 0.62);
@@ -6177,7 +6399,7 @@ function ALLY.plate(dl, m, i, x1, tip, ny, ch, lh, sc, v, party, live)
     if C.jobcol(m) then c1, c2 = C.jhp(m, 1), C.jhp(m, 2); end       -- (BARS > HP colour by job)
     if cfg.card_low ~= false and hp < 0.25 then
         local q = 0.5 + 0.5 * math.sin(os.clock() * 6 + i);
-        local function red(c) return { c[1] + (1.0 - c[1]) * q, c[2] + (0.30 - c[2]) * q, c[3] + (0.34 - c[3]) * q }; end
+        local function red(c) return { c[1] + (1.0 - c[1]) * q, c[2] + (C.LOWC()[2] - c[2]) * q, c[3] + (C.LOWC()[3] - c[3]) * q }; end
         c1, c2 = red(c1), red(c2);
     end
     local dt = imgui.GetIO().DeltaTime or 0.016;
@@ -6187,7 +6409,7 @@ function ALLY.plate(dl, m, i, x1, tip, ny, ch, lh, sc, v, party, live)
         local my = hy + bh + 2 * sc;
         local mpp = math.max(0, math.min(1, m.mpp or 0));
         DL.RF(dl, tx, my, tx + bw2, my + mph, U4(0, 0, 0, 0.45 * v), mph / 2);
-        if mpp > 0 then DL.RF(dl, tx, my, tx + math.max(mph, bw2 * mpp), my + mph, u32(YUI_HEX and { C.HEXMP[1][1], C.HEXMP[1][2], C.HEXMP[1][3], 0.95 * v } or { 0.45, 0.62, 1.0, 0.95 * v }), mph / 2); end
+        if mpp > 0 then DL.RF(dl, tx, my, tx + math.max(mph, bw2 * mpp), my + mph, u32(YUI_HEX and { C.HEXMP[1][1], C.HEXMP[1][2], C.HEXMP[1][3], 0.95 * v } or { 0.80, 0.50, 1.0, 0.95 * v }), mph / 2); end
     end
 end
 -- a card's back: "cur/max" - the current value smaller, the max bigger, on one baseline - as big as fits room;
@@ -6266,6 +6488,227 @@ function ALLY.numbar(dl, x0, x2, ry, y2, lab, cur, frac, col, vcol, fs0, fsz, lf
         if fw >= 1 then DL.RF(dl, x0, by, x0 + fw, by + bh, U4(col[1], col[2], col[3], a), bh / 2); end
     end
 end
+-- Vex mode's turned card (the user's drawing): the name (and how far) laid across its top edge at its left, the edge cut
+-- round it; a small TP tab sitting on the top edge at the right; the job filling the card's right end (its left side
+-- leaning as the card); in the card only the bars - HP, a thin MP under it moved ahead (always there, empty for a member
+-- with none), the bar's own colour, dark, where it's missing; the MP's number just after the HP's. The card shorter by
+-- the old name box, taken off its left (the right ends stay on the line); the leader's dots past its right end
+function C.tlim()                                                    -- (how big these texts may get on the turned look in use: past it they ran into the bars)
+    if YUI_HEX and (cfg.turn_look == 'tab' or cfg.turn_look == 'bare') then return 1.15; end
+    return 1.4;
+end
+function C.tpk() return math.max(0.6, math.min(C.tlim(), tonumber(cfg.party_tp_text) or 1)); end   -- (PARTY > TP text size: turned cards)
+function C.dk() return math.max(0.6, math.min(C.tlim(), tonumber(cfg.party_dist_text) or 1)); end -- (PARTY > Distance text size: turned cards)
+function ALLY.vback(dl, m, i, x1, tip, ny, ch, sc, v, party, live, k, ta, tgt, low)
+    local fs0 = (FS or 1) * 0.80;
+    local hh = ch / 2 * k;
+    local y1, y2 = ny - hh, ny + hh;
+    local sl = ch * 0.30 * k;
+    local ch_ = math.max(1, y2 - y1);
+    local function lean(y) return sl * (y - y1) / ch_; end
+    local tw_ = ALLY.tagw(ch, sc);
+    local cut_ = 0;                                                  -- (the full length, as a card not turned: the job is in its right box)
+    local nx0 = x1 + 2 * sc + cut_;
+    ALLY.nroom = ALLY.nroom or {};
+    ALLY.nroom[i] = -cut_;
+    ALLY.byoff = ALLY.byoff or {};
+    ALLY.byoff[i] = -ch * 0.22;                                      -- (the buffs a little up: on the card's middle)
+    local dim = m.inzone and 1 or 0.5;
+    imgui.SetWindowFontScale(fs0 * 0.56);
+    local jw = (tonumber((imgui.CalcTextSize('WHM'))) or 16) + 7 * sc;   -- (the job's box at the right end: small, just its letters' room)
+    imgui.SetWindowFontScale(fs0);
+    local tc = ALLY.tagcol(m.job);
+    -- the TP tab's size
+    local TPt = nil;
+    if ta > 0 and k >= 0.9 and m.inzone and m.tp ~= nil then
+        local tp = tonumber(m.tp) or 0;
+        imgui.SetWindowFontScale(fs0 * 0.46 * C.tpk());
+        local lw, lhh = imgui.CalcTextSize('TP');
+        imgui.SetWindowFontScale(fs0 * 0.66 * C.tpk());
+        local vw, vh = imgui.CalcTextSize(tostring(tp));
+        imgui.SetWindowFontScale(fs0);
+        lw, lhh, vw, vh = tonumber(lw) or 8, tonumber(lhh) or 7, tonumber(vw) or 16, tonumber(vh) or 10;
+        local th = math.floor(vh + 1 * sc);
+        local d = th * sl / ch_;                                     -- (its sides lean as the card's)
+        local w = lw + 3 * sc + vw + 10 * sc;
+        local xb = tip - 2 * sc;                                     -- (at the card's far right end, over the job box)
+        TPt = { tp = tp, lw = lw, lhh = lhh, vw = vw, vh = vh, th = th, d = d, xa = xb - w, xb = xb };
+    end
+    -- the name's row
+    local T = nil;
+    if ta > 0 and k >= 0.9 then
+        local fs = (FS or 1) * 0.74;
+        local dist = (cfg.party_dist ~= false and i ~= 0 and m.inzone) and (m.dist or (m.fake and (m.far and 32.4 or (3 + (i * 3.7) % 15))) or nil) or nil;
+        imgui.SetWindowFontScale(fs);
+        local _, nh = imgui.CalcTextSize('A'); nh = tonumber(nh) or 12;
+        local nm = (m.name or '?'):upper():sub(1, 6);                -- (a long name: its first 6 letters)
+        local sp = 1.0 * sc;
+        local room = ((TPt and TPt.xa or (tip - jw)) - 8 * sc) - (nx0 + 3 * sc) - (dist and 30 * sc or 0);
+        if spaced_w(nm, sp) > room then
+            while #nm > 2 and spaced_w(nm .. '.', sp) > room do nm = nm:sub(1, -2); end
+            nm = nm .. '.';
+        end
+        ALLY.tabw = ALLY.tabw or {};
+        T = { fs = fs, nh = nh, nm = nm, sp = sp, ds = dist and string.format('%.1f', dist) or nil, far = dist and dist > (tonumber(cfg.party_range) or 20.8),
+              w = ALLY.tabw[m.name or ('m' .. tostring(i))] or (3 * sc + spaced_w(nm, sp) + (dist and 30 * sc or 0)) };
+        imgui.SetWindowFontScale(fs0);
+    end
+    if TPt and not party and live and m.name ~= nil and m.name == ALLY.afirst then ALLY.atpa = ALLY.atpa or {}; ALLY.atpa[ALLY.akey or '?'] = TPt.xa; end
+    if T and party and live and m.name ~= nil and m.name == ALLY.first_name then ALLY.tab1 = { x1 = nx0, tip = tip, y1 = y1, t = os.clock(), tpb = TPt and TPt.xb, tpa = TPt and TPt.xa, tpt = TPt and TPt.th }; end
+    -- the bars' places (the card's left side follows them: the user's drawing)
+    local ya, yb = math.floor(y1) + 3, math.floor(y2) - 3;
+    local H = yb - ya;
+    local hh_ = math.floor(H * 0.58);
+    local mh_ = math.max(3, math.floor(H * 0.32));
+    local hy0 = math.floor(ya + (H - (hh_ + mh_ * 0.90)) / 2);
+    local my0 = hy0 + hh_ - math.floor(mh_ * 0.10);
+    local jx = tip - jw;
+    local L0, R0 = nx0 + 5 * sc, jx - 5 * sc;
+    local mx0 = L0 + (R0 - L0) * 0.12;
+    -- the card: its left side leaning along the HP bar, a step in under it, then down along the MP bar (moved ahead)
+    local ys = math.min(y2 - 2, hy0 + hh_ + 2);
+    local function xU(y) return nx0 - lean(y) + lean(y1); end
+    local function xL(y) return mx0 - 5 * sc - lean(y); end
+    local up_ = { { xU(y1), y1 }, { tip, y1 }, { tip - lean(ys), ys }, { xU(ys), ys } };
+    local lo_ = { { xL(ys), ys }, { tip - lean(ys), ys }, { tip - sl, y2 }, { xL(y2), y2 } };
+    local fillc = U4(0.085, 0.08, 0.115, 0.82 * v);
+    pcall(function() dl:AddConvexPolyFilled(up_, fillc); dl:AddConvexPolyFilled(lo_, fillc); end);
+    ALLY.grad(dl, { nx0, y1 }, { tip - sl, y1 + 1 }, { 1, 1, 1, 0.14 * v }, { 1, 1, 1, 0 }, { 1, 1, 1, 0 }, { 1, 1, 1, 0.14 * v });
+    -- the job at the right end: its box in the job's colour, its left side leaning as the card (a click folds the buffs)
+    local ji = math.max(2, (y2 - y1) * 0.26);                        -- (a small box, well inside the card's top and foot)
+    local jy1, jy2 = y1 + ji, y2 - ji;
+    local jbox = { { jx - lean(jy1) - 3 * sc, jy1 }, { tip - lean(jy1) - 3 * sc, jy1 }, { tip - lean(jy2) - 3 * sc, jy2 }, { jx - lean(jy2) - 3 * sc, jy2 } };
+    if k > 0.3 then
+        ALLY.poly(dl, jbox, U4(tc[1][1], tc[1][2], tc[1][3], 0.95 * v * dim));
+        if ta > 0 then
+            local job = m.tagtext or JOBS[m.job or 0] or '?';
+            imgui.SetWindowFontScale(fs0 * 0.56);                    -- (small, across)
+            local jtw, jth = imgui.CalcTextSize(job);
+            jtw, jth = tonumber(jtw) or 16, tonumber(jth) or 8;
+            DL.T(dl, jx + (jw - jtw) / 2 - lean(ny) - 3 * sc, ny - jth / 2, U4(tc[2][1], tc[2][2], tc[2][3], v * ta), job);
+            imgui.SetWindowFontScale(fs0);
+        end
+        if live then
+            local mx, my = imgui.GetMousePos();
+            ALLY.irect[i] = { jx - sl, jy1, tip, jy2 };
+            if mx >= jx - sl and mx <= tip and my >= jy1 and my <= jy2 and imgui.IsMouseClicked(0) and m.name then BUFFS.flip(m.name); end
+        end
+    end
+    -- the edge (black - white on your target, red when low): the top cut round the name and under the TP tab
+    local ec = low and U4(1.0, 0.32, 0.36, 0.9 * v) or (tgt and U4(1, 1, 1, 0.85 * v) or U4(0, 0, 0, 0.85 * v));
+    local ew = tgt and 1.2 or 1;
+    dl:AddLine({ tip, y1 }, { tip - sl, y2 }, ec, ew);              -- (right side, foot, the stepped left side)
+    dl:AddLine({ tip - sl, y2 }, { xL(y2), y2 }, ec, ew);
+    dl:AddLine({ xL(y2), y2 }, { xL(ys), ys }, ec, ew);
+    dl:AddLine({ xL(ys), ys }, { xU(ys), ys }, ec, ew);
+    dl:AddLine({ xU(ys), ys }, { xU(y1), y1 }, ec, ew);
+    do
+        local gaps = {};
+        if T then gaps[#gaps + 1] = { nx0, nx0 + T.w + 5 * sc }; end
+        if TPt then gaps[#gaps + 1] = { TPt.xa, TPt.xb }; end
+        local xa_ = nx0;
+        for _, g in ipairs(gaps) do
+            if g[1] > xa_ then dl:AddLine({ xa_, y1 }, { g[1], y1 }, ec, ew); end
+            xa_ = math.max(xa_, g[2]);
+        end
+        if xa_ < tip then dl:AddLine({ xa_, y1 }, { tip, y1 }, ec, ew); end
+    end
+    -- in another zone: where, in the bars' place (as the front)
+    if ta > 0 and not m.inzone then
+        imgui.SetWindowFontScale((FS or 1) * 0.80 * 0.70);
+        local zh_ = imgui.GetTextLineHeight();
+        imgui.SetWindowFontScale(fs0);
+        pcall(C.zone_line, dl, m, nx0 + 6 * sc, ny - zh_ / 2, (jx - sl - 6 * sc) - (nx0 + 6 * sc), sc, v * ta);
+    end
+    -- the bars
+    if ta > 0 and m.inzone then
+        local hc = low and { 1, 0.42, 0.46 } or { 1, 0.55, 0.82 };
+        local jc = C.jobcol(m);
+        if jc and not low then hc = jc[1]; end
+        do local a_ = C.hpheatN(m, m.hpp); if a_ and not low then hc = a_; end end
+        local _, h2 = C.hpheatN(m, m.hpp);
+        if h2 == nil or low then h2 = { hc[1] * 0.80, hc[2] * 0.55, hc[3] * 0.80 }; end
+        local slp = sl / ch_;
+        local function bar(x0t, x2t, y0_, y1_, frac, c1, c2)
+            local bx0_, bx2_ = x0t - lean(y1_), x2t - lean(y0_);
+            ALLY.backbar(dl, bx0_, bx2_, y0_, y1_, '', '', frac, c1, fs0, sc, v * ta, nil, c2, nil, slp);
+            local K_ = (y1_ - y0_) * slp;
+            local o_ = { { bx0_ + K_, y0_ }, { bx2_, y0_ }, { bx2_ - K_, y1_ }, { bx0_, y1_ } };
+            local f_ = math.max(0, math.min(1, tonumber(frac) or 0));
+            if f_ < 1 then
+                local fx_ = bx0_ + (bx2_ - bx0_) * f_;
+                local ep_ = ALLY.clip_x(o_, fx_, bx2_);
+                if f_ > 0 then DL.L(dl, fx_, y0_ + 0.5, fx_, y1_ - 0.5, U4(1, 1, 1, 0.9 * v * ta), 1.5); end
+            end
+            local oc_ = U4(0, 0, 0, 0.9 * v * ta);
+            for q = 1, 4 do dl:AddLine(o_[q], o_[q % 4 + 1], oc_, 1.2); end
+        end
+        local function num(cs, x0t, x2t, y0_, y1_, xl_, kh_)
+            local h_ = y1_ - y0_;
+            imgui.SetWindowFontScale(fs0 * 1.2);
+            local _, nh_ = imgui.CalcTextSize(cs); nh_ = tonumber(nh_) or 10;
+            local k_ = math.max(0.5, math.min(1.15, h_ * (kh_ or 1.05) / nh_));
+            imgui.SetWindowFontScale(fs0 * 1.2 * k_);
+            local nw_, nh2 = imgui.CalcTextSize(cs); nw_, nh2 = tonumber(nw_) or 0, tonumber(nh2) or 10;
+            local cx_ = (x0t + x2t) / 2 - lean((y0_ + y1_) / 2);
+            if xl_ then cx_ = xl_ + nw_ / 2; end
+            local cy_ = y0_ + h_ / 2 + nh2 * 0.14;
+            for _, d in ipairs({ { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 } }) do text(dl, cx_ - nw_ / 2 + d[1], cy_ - nh2 / 2 + d[2], cs, { 0.12, 0.07, 0.02, 0.45 * v * ta }); end
+            text(dl, cx_ - nw_ / 2, cy_ - nh2 / 2, cs, { 1, 1, 1, v * ta });
+            imgui.SetWindowFontScale(fs0);
+            return cx_ + nw_ / 2;
+        end
+        bar(L0, R0, hy0, hy0 + hh_, m.hpp, hc, h2);
+        bar(mx0, R0, my0, my0 + mh_, m.mpp, { 0.86, 0.55, 1 }, { 0.62, 0.30, 0.92 });
+        local he_ = num(tostring(m.hp or 0), L0, R0, hy0, hy0 + hh_, nil, 0.80);   -- (the HP number smaller than the bar: it filled it, too big)
+        num(tostring(m.mp or 0), mx0, R0, my0, my0 + mh_, he_ + 4 * sc - lean(my0 + mh_ / 2) + lean(hy0 + hh_ / 2));
+    end
+    C.fullclip(dl);
+    -- the TP tab on the top edge: its sides leaning as the card, "TP" and the number (gold from 1000)
+    if TPt then
+        local yt = y1 - TPt.th;
+        local tab = { { TPt.xa + TPt.d, yt }, { TPt.xb + TPt.d, yt }, { TPt.xb, y1 }, { TPt.xa, y1 } };
+        ALLY.poly(dl, tab, U4(0.085, 0.08, 0.115, 0.90 * v));
+        dl:AddLine(tab[4], tab[1], ec, ew); dl:AddLine(tab[1], tab[2], ec, ew); dl:AddLine(tab[2], tab[3], ec, ew);
+        local full = TPt.tp >= 1000;
+        local x = TPt.xa + TPt.d * 0.5 + 5 * sc;
+        local foot = y1 - (TPt.th - TPt.vh) / 2;
+        imgui.SetWindowFontScale(fs0 * 0.46 * C.tpk());
+        text(dl, x, foot - TPt.lhh - TPt.vh * 0.06, 'TP', full and { 1.0, 0.82, 0.42, 0.85 * v * ta } or { 0.70, 0.68, 0.80, 0.9 * v * ta });
+        imgui.SetWindowFontScale(fs0 * 0.66 * C.tpk());
+        text(dl, x + TPt.lw + 3 * sc, foot - TPt.vh, tostring(TPt.tp), full and { 1.0, 0.82, 0.42, v * ta } or { 0.86, 0.85, 0.92, v * ta });
+        imgui.SetWindowFontScale(fs0);
+    end
+    -- the name across the top edge at the left, how far on its baseline
+    if T then
+        imgui.SetWindowFontScale(T.fs);
+        local ty = y1 - T.nh * 0.55;
+        local x = nx0 + 3 * sc;
+        local a = v * ta * dim;
+        local oc = U4(0.02, 0.015, 0.03, 0.9 * a);
+        for _, d in ipairs({ { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 }, { 1, 1 } }) do spaced(dl, x + d[1], ty + d[2], T.nm, oc, T.sp); end
+        local nc = low and { 1, 0.62, 0.66 } or { 1, 1, 1 };
+        local nw = spaced(dl, x, ty, T.nm, U4(nc[1], nc[2], nc[3], a), T.sp);
+        local wend = (x + nw) - nx0;
+        if T.ds then
+            imgui.SetWindowFontScale(T.fs * 0.80 * C.dk());
+            local dw_, lh_ = imgui.CalcTextSize(T.ds);
+            dw_, lh_ = tonumber(dw_) or 0, tonumber(lh_) or T.nh;
+            local dx, dy = x + nw + 6 * sc + (tonumber(cfg.party_dist_x) or 0) * sc, ty + T.nh * 0.68 - lh_ * 0.78;   -- (PARTY > Distance position)
+            if TPt then dx = math.min(dx, TPt.xa - dw_ - 4 * sc); end    -- (never into the TP)
+            dx = math.max(dx, x + nw + 4 * sc);                       --  (nor back into the name)
+            for _, d in ipairs({ { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 } }) do text(dl, dx + d[1], dy + d[2], T.ds, { 0.02, 0.015, 0.03, 0.9 * a }); end
+            text(dl, dx, dy, T.ds, T.far and { 1, 0.55, 0.75, a } or { 0.86, 0.85, 0.92, a });
+            wend = (dx + dw_) - nx0;
+        end
+        ALLY.tabw[m.name or ('m' .. tostring(i))] = wend;
+        imgui.SetWindowFontScale(fs0);
+    end
+    if (m.leader or m.aleader) and k > 0.9 then
+        LEAD_MARK(dl, tip + 4.5 * sc * 0.46 + 3 * sc, ny, 4.5 * sc * 1.12, m.aleader, v * dim, 'vdots');
+    end
+    dl:PopClipRect();
+end
 -- Normal mode's card turned over (see ALLY.turn): while turning, the card's shape flattening and opening again with a
 -- light across it; then its back - the tag, the name, HP and MP in numbers, the TP
 function ALLY.nflip(dl, m, i, x1, tip, ny, ch, lh, sc, v, party, live, f)
@@ -6293,6 +6736,14 @@ function ALLY.nflip(dl, m, i, x1, tip, ny, ch, lh, sc, v, party, live, f)
     local tw_, th_t, s_t = ALLY.tagw(ch, sc);
     local tcol = ALLY.tagcol(m.job);
     local dimt = m.inzone and 1 or 0.45;
+    if face then                                                     -- the back: ALLY.vback (and the turn's light over it)
+        ALLY.vback(dl, m, i, x1, tip, ny, ch, sc, v, party, live, k, ta, tgt, low);
+        if p < 1 then
+            local gl = (1 - k) ^ 2;
+            DL.L(dl, x1, ny, tip, ny, U4(1, 0.75, 0.92, 0.9 * gl * v), (1 + 2 * gl) * sc);
+        end
+        return;
+    end
     if face then                                                     -- the back: a box on the left - the name, its TP under it - where the tag was; the job
         local nx0 = x1 + 2 * sc;                                     --  tag in a box at the card's right end, how far under it (the card as long as the front's)
         tend = nx0 + tw_;
@@ -6306,7 +6757,9 @@ function ALLY.nflip(dl, m, i, x1, tip, ny, ch, lh, sc, v, party, live, f)
             local fsn = (FS or 1) * 0.80 * 0.70;
             local nm = (m.name or '?'):upper():sub(1, 5):gsub('%s+$', '');   -- (the first 5 letters: two Fluffs or two Irons told apart)
             imgui.SetWindowFontScale(fsn);
-            local room = tw_ - sl * 0.3 - 5 * sc;                    -- (still too wide: smaller, then its last letters left off - no dot)
+            local lsc = sc * 0.8;                                    -- (the leader's dots before the name, as on the front - a little smaller)
+            local ldw = (m.leader or m.aleader) and ((m.aleader and 4.5 * lsc * 2.6 or 4.5 * lsc * 2) + 4 * sc) or 0;
+            local room = tw_ - sl * 0.3 - 5 * sc - ldw;              -- (still too wide: smaller, then its last letters left off - no dot)
             local w0 = tonumber((imgui.CalcTextSize(nm))) or 0;
             if w0 > room then
                 imgui.SetWindowFontScale(fsn * math.max(0.56, room / math.max(1, w0)));
@@ -6315,7 +6768,8 @@ function ALLY.nflip(dl, m, i, x1, tip, ny, ch, lh, sc, v, party, live, f)
             local _, h1 = imgui.CalcTextSize(nm);
             h1 = tonumber(h1) or 10;
             local ny_ = hastp and (y1 + ((ny - y1) - h1) / 2 + 1 * sc) or (ny - h1 / 2);   -- (with TP: the top half)
-            text(dl, nx0 + 4 * sc, ny_, nm, { 1, 1, 1, v * ta * (m.inzone and 1 or 0.55) });
+            if ldw > 0 then pcall(ALLY.lead, dl, m, nx0 + 4 * sc, ny_ + h1 / 2, lsc, v * ta); end
+            text(dl, nx0 + 4 * sc + ldw, ny_, nm, { 1, 1, 1, v * ta * (m.inzone and 1 or 0.55) });
             imgui.SetWindowFontScale(FS or 1);
             if hastp then                                            -- ("TP 2250" on one line in the bottom half, gold from 1000)
                 local tp = tonumber(m.tp) or 0;
@@ -6447,7 +6901,7 @@ function ALLY.nflip(dl, m, i, x1, tip, ny, ch, lh, sc, v, party, live, f)
             if hasmp then
                 local my_ = hb_ + gap_;
                 DL.L(dl, tend + gp - lean(ny) + 1, ny, xd - sl * 0.5, ny, U4(1, 1, 1, 0.55 * v), 1);   -- (the box's line, on across the card: one line)
-                bar(my_, yb, m.mpp, { 0.55, 0.72, 1 }, { 0.30, 0.45, 0.95 });
+                bar(my_, yb, m.mpp, { 0.86, 0.55, 1 }, { 0.62, 0.30, 0.92 });
                 num(tostring(m.mp or 0), L0, R0, my_, yb);
             end
         end
@@ -6522,7 +6976,445 @@ function ALLY.backbar(dl, x0, x2, ya, yb, lab, cur, frac, col, fs0, sc, a, DK, c
     imgui.SetWindowFontScale(fs0);
 end
 -- Hex link's party plate (see ALLY.hexrows and ALLY.turn): the front or the back, turning between them
+-- A turned plate's job tag, name and distance (yalms) laid ACROSS its top edge - half over it, half in it, the edge line
+-- passing behind them (cut where they are), as if they stood in front of the frame. The plate keeps only the TP and the bars.
+-- ALLY.tabgeo: what goes there and where; ALLY.nametop: drawing it
+function ALLY.tabgeo(m, i, x1, tip, y1, K, sc, k)
+    local fs = (FS or 1) * 0.74;
+    local dist = (cfg.party_dist ~= false and i ~= 0 and m.inzone) and (m.dist or (m.fake and (m.far and 32.4 or (3 + (i * 3.7) % 15))) or nil) or nil;
+    local ds = dist and string.format('%.1f', dist) or nil;
+    imgui.SetWindowFontScale(fs * 0.80 * C.dk());
+    local dw = ds and (tonumber((imgui.CalcTextSize(ds))) or 0) or 0;
+    imgui.SetWindowFontScale(fs);
+    local _, nh = imgui.CalcTextSize('A'); nh = tonumber(nh) or 12;
+    local tch = math.max(4, (nh * 0.74) / 0.78);                     -- (the job tag: as tall as the name's capitals)
+    local tgw = ALLY.tagw(tch, sc) * 0.88;
+    local nm = (m.name or '?'):upper():sub(1, 6);                    -- (a long name: its first 6 letters)
+    local sp = 1.0 * sc;
+    local x0 = x1 + K + 3 * sc;                                      -- (just past the plate's top-left cut: never over its lit line)
+    local room = (tip - K - 6 * sc) - x0 - (ds and (dw + 6 * sc) or 0) - (ALLY.tproom or 0);
+    if spaced_w(nm, sp) > room then
+        while #nm > 2 and spaced_w(nm .. '.', sp) > room do nm = nm:sub(1, -2); end
+        nm = nm .. '.';
+    end
+    ALLY.tabw = ALLY.tabw or {};
+    local w_ = ALLY.tabw[m.name or ('m' .. tostring(i))] or (spaced_w(nm, sp) + (ds and (dw + 6 * sc) or 0));
+    return { x0 = x0, nm = nm, sp = sp, ds = ds, dw = dw, far = dist and dist > (tonumber(cfg.party_range) or 20.8), nh = nh, fs = fs,
+             tch = tch, tgw = tgw, k = k or 1, w = w_, x1 = x1, K = K };
+end
+function ALLY.nametop(dl, T, m, i, y1, sc, a, nc, v, live, fill)
+    if T.k < 0.9 then return; end                                    -- (while turning: nothing on the edge)
+    C.fullclip(dl);                                                  -- (over the plate's edge: never cut by the list's window)
+    local ty = y1 - T.nh * 0.55;                                     -- (laid across the edge line: half over it, the line cut round it)
+    local capm = ty + T.nh * 0.55;
+    local x = T.x0;                                                  -- (the name alone: the job is in the plate's right box)
+    imgui.SetWindowFontScale(T.fs);
+    local oc = U4(0.02, 0.015, 0.03, 0.9 * a);                       -- (a dark rim: they read over the line and the plate alike)
+    for _, d in ipairs({ { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 }, { 1, 1 } }) do spaced(dl, x + d[1], ty + d[2], T.nm, oc, T.sp); end
+    local nw = spaced(dl, x, ty, T.nm, U4(nc[1], nc[2], nc[3], a), T.sp);
+    if T.ds then                                                     -- (how far, in yalms - pink out of range)
+        imgui.SetWindowFontScale(T.fs * 0.80 * C.dk());
+        local _, lh_ = imgui.CalcTextSize(T.ds);
+        lh_ = tonumber(lh_) or T.nh;
+        local dx, dy = x + nw + 6 * sc, ty + T.nh * 0.78 - lh_ * 0.78;   -- (on the name's baseline)
+        for _, d in ipairs({ { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 } }) do text(dl, dx + d[1], dy + d[2], T.ds, { 0.02, 0.015, 0.03, 0.9 * a }); end
+        text(dl, dx, dy, T.ds, T.far and { 1, 0.55, 0.75, a } or { 0.86, 0.85, 0.92, a });
+        local dw2 = imgui.CalcTextSize(T.ds);
+        ALLY.tabw[m.name or ('m' .. tostring(i))] = (dx + (tonumber(dw2) or 0)) - T.x0;
+    else
+        ALLY.tabw[m.name or ('m' .. tostring(i))] = (x + nw) - T.x0;
+    end
+    dl:PopClipRect();
+end
 function ALLY.hexrow(dl, m, i, x1, tip, ny, ch, lh, sc, v, party, live)
+    local now = os.clock();
+    local fs0 = (FS or 1) * 0.80;
+    local GO, GO2, DK = C.HEXHP[1], { 1, 0.90, 0.62 }, { 0.79, 0.65, 0.35 };
+    local AZ = C.HEXMP[1];
+    local hp = m.inzone and math.max(0, math.min(1, m.hpp or 0)) or 0;
+    local mpp = math.max(0, math.min(1, m.mpp or 0));
+    local tp = tonumber(m.tp) or 0;
+    local low = cfg.card_low ~= false and m.inzone and hp < 0.25;
+    local beat = low and (0.5 + 0.5 * math.sin(now * 6 + i)) or 0;
+    local warn = nil;                                                -- (Hex link: no coloured frame - the HP bar itself carries it, see C.hpheat)
+    local tgt = ALLY.is_tgt(m, i, ALLY.tidx_cur);
+    local dim = m.inzone and 1 or 0.5;
+    -- the turn
+    local key = m.name or ('m' .. i);
+    local f = ALLY.fl(key);
+    local p = f and math.min(1, (now - f.t) / 0.46) or 1;
+    local back = f and f.back or false;
+    local face = back;
+    if p < 0.5 then face = not back; end                             -- (the first half still shows the side it leaves)
+    local e = p < 1 and (0.5 - 0.5 * math.cos(math.pi * p)) or 1;
+    local k = math.abs(math.cos(math.pi * e));                        -- (its height while turning: 1 -> 0 -> 1)
+    if p >= 1 and f then
+        local tb = now - f.t - 0.46;                                 -- (a little bounce as it lands)
+        if tb >= 0 and tb < 0.25 then k = 1 + 0.06 * math.sin(math.pi * tb / 0.25); end
+    end
+    local ta = (k > 0.55) and math.min(1, (k - 0.55) / 0.35) or 0;    -- (the writing fades while it's edge-on)
+    local hh = ch / 2 * k;
+    local y1, y2 = ny - hh, ny + hh;
+    local K = math.min(9 * sc, ch * 0.32) * k;                        -- (the corner cut)
+    local bk = face;                                                 -- (in another zone too: turned like the others - its zone where the bars are)                                    -- (turned: the front's plate, its TP and job tag swapped - TP on the left,
+    local TWb = bk and ALLY.tagw(ch * 0.78, sc) or 0;                --  the tag in the right box - the name smaller, HP / MP numbers in their bars)
+    local RW = 0;                                                    -- (turned: the right box - the job's letters and the leader's dots)
+    if bk then
+        RW = ALLY.tagw(ch * 0.78, sc) * 0.85 + 10 * sc;             -- (room for the coloured job tag, a touch smaller)
+    end
+    local Kr = K;
+    ALLY.nroom = ALLY.nroom or {};
+    ALLY.nroom[i] = 0;
+    if bk then                                                       -- (turned: no TP block on the left - the plate that much shorter, taken off its LEFT end so
+        local cut_ = 0;                                              -- (full length now: the job tag is back, in the right box)                   --  the right ends stay lined up on the line with the alliances; the buffs and
+        x1 = x1 + cut_;                                              --  the prism follow it in)
+        ALLY.nroom[i] = -cut_;
+    end
+    -- the plate (one piece; your party's TP in a compartment at its right end)
+    local plate = { { x1 + K, y1 }, { tip, y1 }, { tip, y2 - K }, { tip - K, y2 }, { x1, y2 }, { x1, y1 + K } };
+    local TPt = nil;                                                 -- (turned: the TP in a small tab on the top edge, just left of the right box)
+    if bk and ta > 0 and k >= 0.9 and m.tp ~= nil and m.inzone then
+        imgui.SetWindowFontScale(fs0 * 0.46 * C.tpk());
+        local lw_, lhh_ = imgui.CalcTextSize('TP');
+        imgui.SetWindowFontScale(fs0 * 0.66 * C.tpk());
+        local vw_, vh_ = imgui.CalcTextSize(tostring(tp));
+        imgui.SetWindowFontScale(fs0);
+        lw_, lhh_, vw_, vh_ = tonumber(lw_) or 8, tonumber(lhh_) or 7, tonumber(vw_) or 16, tonumber(vh_) or 10;
+        local th_ = math.floor(vh_ + 1 * sc);
+        local sl_ = 4 * sc * k;                                      -- (its right side carries on the right box's leaning line, up from the edge)
+        local d_ = th_ * (2 * sl_) / math.max(1, (y2 - y1) - 4 * sc);
+        local xb_ = tip - RW + sl_;
+        local w_ = lw_ + 3 * sc + vw_ + 8 * sc;
+        TPt = { lw = lw_, lhh = lhh_, vw = vw_, vh = vh_, th = th_, xa = xb_ - w_, xb = xb_, d = 0 };
+    end
+    ALLY.tproom = TPt and (tip - TPt.xa + 4 * sc) or nil;
+    local TB = (bk and ta > 0) and ALLY.tabgeo(m, i, x1, tip, y1, K, sc, k) or nil;
+    ALLY.tproom = nil;   -- (turned: the name's tab, part of the plate)
+    local outl = plate;
+    if TB and party and live and m.name ~= nil and m.name == ALLY.first_name then ALLY.tab1 = { x1 = x1, tip = tip, y1 = y1, t = now, tpb = TPt and (TPt.xb + TPt.d), tpt = TPt and TPt.th }; end   -- (after the tab's leaning top)
+    if false then outl = { { x1 + K, y1 }, { tip, y1 }, { tip, y2 - K }, { tip - K, y2 }, { x1, y2 }, { x1, y1 + K } }; end
+    local CR = { 1, 0.94, 0.78 };                                    -- (your target's edge: Hex link's gold-cream, as its frames)
+    local ec = low and { 1.0, 0.32, 0.36 } or (tgt and CR or DK);
+    local ea = low and (0.55 + 0.45 * beat) or (tgt and 0.95 or 0.45);
+    if warn then ec, ea = warn, 0.95; end
+    if TB then C.fullclip(dl); end                                   -- (the tab reaches over the plate's top: never cut by the list's window)
+    if low then pcall(ALLY.glow_ring, dl, outl, (1.2 + 1.6 * beat) * sc, U4(1.0, 0.24, 0.30, (0.12 + 0.28 * beat) * v)); end
+    if warn then pcall(ALLY.glow_ring, dl, outl, 2.4 * sc, U4(warn[1], warn[2], warn[3], 0.30 * v)); end   -- (yellow / orange: a steady glow round it - the gold edge alone hid it)
+    pcall(function() dl:AddConvexPolyFilled(plate, tgt and U4(0.085, 0.085, 0.115, 0.88 * v) or U4(0.067, 0.059, 0.09, 0.86 * v)); end);   -- (the picked one a touch lighter)
+    if warn then pcall(function() dl:AddConvexPolyFilled(plate, U4(warn[1], warn[2], warn[3], 0.08 * v)); end); end
+    local tw = bk and RW or (party and 36 * sc or 0);                -- (the right box's width: the TP's - turned, the job's)
+    local cut = tip - tw;                                            -- (its slanted cut: from cut + sl at the top to cut - sl at the foot)
+    local sl = 4 * sc * k;
+    if bk then                                                       -- (turned: the right box - its slanted line, the job in its colour, the leader's dots
+        DL.L(dl, cut + sl, y1 + 2 * sc, cut - sl, y2 - 2 * sc, U4(DK[1], DK[2], DK[3], 0.45 * v), 1);   --  one over the other under it)
+        if ta > 0 then
+            local lead_ = false;                                     -- (the leader's dots: outside the plate, at its right)
+            local cx_ = cut + (tip - cut) / 2;
+            local jh_ = math.floor((y2 - y1) * 0.46);
+            local jy_ = ny - jh_ / 2;
+            ALLY.tagk, ALLY.tagh = 0.85, jh_;                        -- (the coloured job tag, as on the front - its click folds the buffs)
+            local slope_ = (2 * sl) / math.max(1, (y2 - y1) - 4 * sc);   -- (its left side leaning as the box's line, its right side straight)
+            local lx_ = cut + sl - slope_ * ((jy_ + jh_) - (y1 + 2 * sc)) + 3 * sc;
+            pcall(ALLY.tag, dl, m, i, lx_, jy_ + jh_ / 2, ch * 0.78, sc, v, live, false, { jy_, jy_ + jh_, 0, slope_ });
+            ALLY.tagk, ALLY.tagh = nil, nil;
+            if lead_ then
+                local n_ = m.aleader and 3 or 2;
+                local rr = 4.5 * sc * 0.42;
+                local step = rr * 2.1;
+                local top_ = jy_ + jh_ + 1 * sc;
+                local my0 = top_ + ((y2 - 2 * sc) - top_ - (n_ - 1) * step) / 2;
+                local g1, g2 = C.GOLDH, (YUI_TINT_ON and { 0.96, 0.97, 1.0 } or C.HEXMP[1]);   -- (Void red: red and white)
+                for q = 1, n_ do
+                    local u = (q - 1) / math.max(1, n_ - 1);
+                    local py = my0 + (q - 1) * step;
+                    C.hexdot(dl, cx_, py, rr + 1.2, U4(0, 0, 0, 0.7 * v * dim));
+                    C.hexdot(dl, cx_, py, rr, U4(g1[1] + (g2[1] - g1[1]) * u, g1[2] + (g2[2] - g1[2]) * u, g1[3] + (g2[3] - g1[3]) * u, v * dim));
+                end
+            end
+        end
+    elseif party then
+        local full = tp >= 1000;
+        if full then                                                 -- (lit gold from 1000, breathing)
+            local cmp = { { cut + sl, y1 }, { tip, y1 }, { tip, y2 - K }, { tip - K, y2 }, { cut - sl, y2 } };
+            pcall(function() dl:AddConvexPolyFilled(cmp, U4(GO[1], GO[2], GO[3], (0.13 + 0.06 * math.sin(now * 3 + i)) * v)); end);
+        end
+        DL.L(dl, cut + sl, y1 + 2 * sc, cut - sl, y2 - 2 * sc, full and U4(GO2[1], GO2[2], GO2[3], 0.8 * v) or U4(DK[1], DK[2], DK[3], 0.45 * v), 1);
+        if ta > 0 and m.inzone then
+            local cx = cut + (tip - cut) / 2;
+            imgui.SetWindowFontScale(fs0 * 0.55);
+            local lw, lhh = imgui.CalcTextSize('TP');
+            imgui.SetWindowFontScale(fs0 * 0.82);
+            local ts = tostring(tp);
+            local vw, vh = imgui.CalcTextSize(ts);
+            lhh, vh = tonumber(lhh) or 8, tonumber(vh) or 12;
+            local yy = ny - (lhh + vh * 0.9) / 2;
+            text(dl, cx - vw / 2, yy + lhh * 0.95, ts, full and { GO2[1], GO2[2], GO2[3], v * ta } or { 0.80, 0.79, 0.88, 0.85 * v * ta });
+            imgui.SetWindowFontScale(fs0 * 0.55);
+            text(dl, cx - lw / 2, yy, 'TP', full and { GO[1], GO[2], GO[3], 0.85 * v * ta } or { 0.62, 0.60, 0.72, 0.8 * v * ta });
+            imgui.SetWindowFontScale(fs0);
+        end
+    end
+    if tgt and not low then                                          -- (your target: the arrow's soft glow round its edge)
+        for q = 1, #outl do dl:AddLine(outl[q], outl[q % #outl + 1], U4(1, 0.80, 0.43, 0.22 * v), 4 * sc); end
+    end
+    for q = 1, #outl do                                              -- (turned: the top edge stops either side of the tag, name and distance on it)
+        local ecol, ew = U4(ec[1], ec[2], ec[3], ea * v), warn and 1.8 or (tgt and 1.4 or 1);
+        if TB and q == 1 and TB.k >= 0.9 then
+            local gaps = { { TB.x0 - 4 * sc, TB.x0 + TB.w + 5 * sc } };   -- (the line cut round the name, and under the TP tab)
+            if TPt then gaps[#gaps + 1] = { TPt.xa, TPt.xb }; end
+            local LG = ALLY.labgap;
+            if LG and not party and LG.name ~= nil and LG.name == m.name then gaps[2] = { LG.a, LG.b }; end   -- (the alliance's title on its first plate)
+            local xa_ = outl[1][1];
+            for _, g in ipairs(gaps) do
+                if g[1] > xa_ then dl:AddLine({ xa_, y1 }, { math.min(g[1], outl[2][1]), y1 }, ecol, ew); end
+                xa_ = math.max(xa_, g[2]);
+            end
+            if xa_ < outl[2][1] then dl:AddLine({ xa_, y1 }, outl[2], ecol, ew); end
+        else
+            dl:AddLine(outl[q], outl[q % #outl + 1], ecol, ew);
+        end
+    end
+    if TPt then                                                      -- (the TP laid across the top edge, as the name - the line cut round it; gold from 1000)
+        local full = tp >= 1000;
+        local x_ = TPt.xa + 4 * sc;
+        local ny_ = y1 - TPt.vh * 0.55;                              -- (the number's middle on the line)
+        local foot = ny_ + TPt.vh * 0.80;                            -- (its digits' foot: "TP" stands on it)
+        local oc = { 0.02, 0.015, 0.03, 0.9 * v * ta };
+        imgui.SetWindowFontScale(fs0 * 0.46 * C.tpk());
+        local ly_ = foot - TPt.lhh * 0.85;
+        for _, dd in ipairs({ { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 } }) do text(dl, x_ + dd[1], ly_ + dd[2], 'TP', oc); end
+        text(dl, x_, ly_, 'TP', full and { GO[1], GO[2], GO[3], 0.9 * v * ta } or { 0.72, 0.70, 0.82, 0.95 * v * ta });
+        imgui.SetWindowFontScale(fs0 * 0.66 * C.tpk());
+        local vx_ = x_ + TPt.lw + 3 * sc;
+        for _, dd in ipairs({ { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 } }) do text(dl, vx_ + dd[1], ny_ + dd[2], tostring(tp), oc); end
+        text(dl, vx_, ny_, tostring(tp), full and { GO2[1], GO2[2], GO2[3], v * ta } or { 0.88, 0.87, 0.94, v * ta });
+        imgui.SetWindowFontScale(fs0);
+    end
+    if TB then dl:PopClipRect(); end
+    if k > 0.9 then
+        local cc = warn or (tgt and CR or GO2);                                -- (the cuts lit, as Hex link's frames - cream on your target)
+        DL.L(dl, x1, y1 + K, x1 + K, y1, U4(cc[1], cc[2], cc[3], (tgt and 1 or 0.6) * v), 1.6 * sc);
+        DL.L(dl, tip - K, y2, tip, y2 - K, U4(cc[1], cc[2], cc[3], (tgt and 1 or 0.6) * v), 1.6 * sc);
+        if m.leader or m.aleader then                                -- (the leader's dots at the plate's right end, one over the other, just outside
+            local n_ = m.aleader and 3 or 2;                         --  its edge - front and turned; gold to azure, as LEAD_MARK)
+            local rr = 4.5 * sc * 0.46 * 1.12;
+            local step = rr * 2.15;
+            local mx_, my_ = tip + rr + 3 * sc, ny;
+            local g1, g2 = C.GOLDH, (YUI_TINT_ON and { 0.96, 0.97, 1.0 } or C.HEXMP[1]);   -- (Void red: red and white)
+            C.fullclip(dl);                                          -- (outside the plate: never cut by the list's window)
+            for q = 1, n_ do
+                local u = (q - 1) / math.max(1, n_ - 1);
+                local o_ = (q - (n_ + 1) / 2) * step;
+                local px, py = mx_, my_ + o_;                        -- (the first - gold - at the top)
+                C.hexdot(dl, px, py, rr + 1.2, U4(0, 0, 0, 0.7 * v * dim));
+                C.hexdot(dl, px, py, rr, U4(g1[1] + (g2[1] - g1[1]) * u, g1[2] + (g2[2] - g1[2]) * u, g1[3] + (g2[3] - g1[3]) * u, v * dim));
+            end
+            dl:PopClipRect();
+        end
+    end
+    -- the job's tag (its click folds the buffs; while turning: a stripe of its colour)
+    local tend;
+    if bk then
+        imgui.SetWindowFontScale(fs0 * 0.78);                        -- (the TP where the tag is on the front: its block just as wide as "3000" -
+        local w3_ = tonumber((imgui.CalcTextSize('3000'))) or 30;    --  the name is over the plate now, the bars get the rest; the alliance's too)
+        imgui.SetWindowFontScale(fs0);
+        tend = x1 + K * 0.5 - 2 * sc;                                -- (no TP block: the bars from the plate's left)
+    elseif p >= 1 and k >= 0.99 then
+        tend = ALLY.tag(dl, m, i, x1 + 5 * sc, ny, ch * 0.78, sc, v, live);
+    else
+        local tc = ALLY.tagcol(m.job)[1];
+        local th_ = ch * 0.5 * k;
+        DL.RF(dl, x1 + 5 * sc, ny - th_ / 2, x1 + 39 * sc, ny + th_ / 2, U4(tc[1], tc[2], tc[3], v * dim));
+        tend = x1 + 39 * sc;
+    end
+    local bx = tend + 7 * sc;
+    local bw = (bk and (cut - sl - 7 * sc) or (party and (cut - sl - 7 * sc) or (tip - 8 * sc))) - bx;   -- (turned: the bars to the right box)
+    local top = ny - ch / 2 + 3 * sc;
+    if face and m.inzone then                                        -- (turned: the name a little smaller when the numbers under it need the room - big plates)
+        imgui.SetWindowFontScale(FS or 1);                           -- (the name's size, as ALLY.hex draws the plates)
+        local _, nh0 = imgui.CalcTextSize('A'); nh0 = tonumber(nh0) or 12;
+        local avail = ny - top;                                      -- (the upper half: the bars take the lower)
+        local s_ = (nh0 > avail) and math.max(0.6, avail / nh0) or 1;
+        imgui.SetWindowFontScale((FS or 1) * s_ * 0.78);             -- (turned: the name smaller - the bars under it need the room)
+    end
+    local _, nh = imgui.CalcTextSize('A');
+    if ta > 0 then
+        -- the name, on both sides
+        local nc = low and { 1, 0.62 + 0.38 * (1 - beat), 0.62 + 0.38 * (1 - beat) } or { 1, 1, 1 };
+        local nx0 = bk and (x1 + K * 0.6 + 4 * sc) or bx;            -- (turned: the name from the plate's left, over the TP)
+        local lmw = 0;                                               -- (the leader's dots: on the plate's top-left cut now, not before the name)
+        local nm = bk and '' or (m.name or '?'):upper();             -- (turned: the name is over the plate - ALLY.nametop)
+        local sp = 1.2 * sc;
+        local dist = (cfg.party_dist ~= false and i ~= 0 and m.inzone and not bk) and (m.dist or (m.fake and (m.far and 32.4 or (3 + (i * 3.7) % 15))) or nil) or nil;
+        local room = (bk and (bx - 3 * sc - nx0) or bw) - lmw - (dist and 30 * sc or 0);
+        local nfk = nil;
+        if spaced_w(nm, sp) > room and not bk then
+            while #nm > 2 and spaced_w(nm .. '.', sp) > room do nm = nm:sub(1, -2); end
+            nm = nm .. '.';
+        end
+        local nw = bk and 0 or spaced(dl, nx0 + lmw, top, nm, U4(nc[1], nc[2], nc[3], v * ta * dim), sp);
+        if TB then pcall(ALLY.nametop, dl, TB, m, i, y1, sc, v * ta * dim, nc, v, live and p >= 1); imgui.SetWindowFontScale(fs0); end
+        if dist then
+            local dstr = string.format('%.1f', dist);
+            imgui.SetWindowFontScale(fs0 * 0.62);
+            local _, dh = imgui.CalcTextSize(dstr);
+            local far_ = dist > (tonumber(cfg.party_range) or 20.8);
+            text(dl, nx0 + lmw + nw + 6 * sc, top + (nh - (tonumber(dh) or nh)) * 0.78, dstr, far_ and { 1, 0.55, 0.75, v * ta } or { 0.84, 0.83, 0.90, 0.9 * v * ta });
+            imgui.SetWindowFontScale(fs0);
+        end
+        local nbot = top + nh * (nfk or 1);                          -- (the name's foot: the TP goes under it)
+        local ry = bk and (top + 1 * sc) or (top + nh + 1.5 * sc);   -- (under the name: the bars, or the numbers - turned, from the top beside it)
+        if not m.inzone then
+            local zy_ = ry;
+            if bk then                                               -- (turned: in the middle of the plate, where the bars are)
+                imgui.SetWindowFontScale((FS or 1) * 0.80 * 0.70);
+                zy_ = ny - imgui.GetTextLineHeight() / 2;
+                imgui.SetWindowFontScale(fs0);
+            end
+            pcall(C.zone_line, dl, m, bx + (bk and 4 * sc or 0), zy_, bw, sc, v * ta);
+        elseif not face then                                         -- FRONT: Hex link's HP bar, the MP under it
+            if v > 0.3 then
+                local dt = imgui.GetIO().DeltaTime or 0.016;
+                local hth, mth = 1, 1;                                   -- (the plates' bars: always their own size - the thickness sliders are the turned plates')
+                local hb = 7.5 * sc * hth;
+                local hy = ry + 1 * sc + hb / 2;
+                local hc1, hc2 = C.HEXHP[1], C.HEXHP[2];
+                if C.jobcol(m) then hc1, hc2 = C.jhp(m, 1), C.jhp(m, 2); end   -- (BARS > HP colour by job)
+                do local h1_, h2_ = C.hpheat(m, hp); if h1_ then hc1, hc2 = h1_, h2_; end end   -- (under 75%: orange, under 50%: red-orange)
+                if low then
+                    local function red(c) return { c[1] + (1.0 - c[1]) * (0.7 + 0.3 * beat), c[2] + (C.LOWC()[2] - c[2]) * (0.7 + 0.3 * beat), c[3] + (C.LOWC()[3] - c[3]) * (0.7 + 0.3 * beat) }; end
+                    hc1, hc2 = red(hc1), red(hc2);
+                end
+                C.hexbar(dl, bx, hy - 1, bw, 2, hp, lagged('hx' .. i, hp, dt), i, { c1 = hc1, c2 = hc2, band = hb, al = v * ta });
+                if party or (m.mp or 0) > 0 then
+                    local mh = math.max(1, 3 * sc * mth);
+                    local my = hy + hb / 2 + 3 * sc;
+                    DL.RF(dl, bx + 3 * sc, my, bx + bw - 3 * sc, my + mh, U4(0.05, 0.10, 0.14, 0.9 * v * ta), mh / 2);
+                    if mpp > 0 then DL.RF(dl, bx + 3 * sc, my, bx + 3 * sc + (bw - 6 * sc) * mpp, my + mh, U4(AZ[1], AZ[2], AZ[3], 0.95 * v * ta), mh / 2); end
+                end
+            end
+        else                                                         -- BACK: HP | MP in numbers where the bars were
+            local hpmax = (m.hpp and m.hpp > 0) and math.floor((m.hp or 0) / m.hpp + 0.5) or (m.hp or 0);
+            local mpmax = (m.mpp and m.mpp > 0) and math.floor((m.mp or 0) / m.mpp + 0.5) or (m.mp or 0);
+            local hasmp = true;                                     -- (always the MP bar: empty for a member with none - every card the same)
+            local mid = hasmp and (bx + bw / 2) or (bx + bw);         -- (one number each, a small hex bar under it)
+
+            local jc_ = C.jobcol(m);                                 -- (BARS > HP colour by job: the turned plate's HP as its bar)
+            local hgo, hgo2 = GO, GO2;
+            if jc_ then hgo, hgo2 = jc_[1], { jc_[1][1] + (1 - jc_[1][1]) * 0.4, jc_[1][2] + (1 - jc_[1][2]) * 0.4, jc_[1][3] + (1 - jc_[1][3]) * 0.4 }; end
+            local hc1, hc2 = C.HEXHP[1], C.HEXHP[2];                   -- (the same colours as the plate's front bar)
+            if C.jobcol(m) then hc1, hc2 = C.jhp(m, 1), C.jhp(m, 2); end
+            do local h1_, h2_ = C.hpheat(m, m.hpp); if h1_ then hc1, hc2 = h1_, h2_; end end   -- (the same heat as the front)
+            if low then hc1, hc2 = C.LOWC(1), C.LOWC(); end
+            local yb_ = y2 - 3 * sc;                                 -- (under the name, as the front's: HP the whole width, MP under it - the
+            local gap_ = 2 * sc;                                     --  front's shapes, taller, their numbers inside; HP the taller)
+            local hh_ = (yb_ - ry - gap_) * 0.56;                    -- (HP its usual size - no MP (a MNK, a WAR): the same size, in the middle; MP thin, resting on its foot -
+            local mhh_ = (yb_ - ry) * 0.30;                          --  the two together in the middle of the plate)
+            local hy0_ = hasmp and (ry + ((yb_ - ry) - (hh_ + mhh_ * 0.90)) / 2) or (ry + ((yb_ - ry) - hh_) / 2);
+            local my0_ = hy0_ + hh_ - mhh_ * 0.10;                   -- (only its top edge over the HP's foot: the numbers clear of each other)   -- (HP the taller, MP under it in the same shape, a little shorter - each
+            local dt_ = imgui.GetIO().DeltaTime or 0.016;                    --  its number in its middle)
+            C.hexbar(dl, bx, hy0_ + hh_ / 2 - 1, bw, 2, m.hpp or 0, lagged('hx' .. i, m.hpp or 0, dt_), i, { c1 = hc1, c2 = hc2, band = hh_, al = v * ta });
+            if hasmp then
+                local my_, mh_ = my0_, mhh_;                            -- (its top over the HP's foot: laid on it)
+                local mw_ = bw * 0.88;
+                C.hexbar(dl, bx + bw * 0.12, my_ + mh_ / 2 - 1, mw_, 2, mpp, lagged('mx' .. i, mpp, dt_), i + 50,   -- (moved ahead: its right point under the HP's)
+                    { c1 = AZ, c2 = { AZ[1] * 0.55, AZ[2] * 0.70, AZ[3] * 0.95 }, band = mh_, al = v * ta });
+            end
+            local function mid_num(cs, x0_, w_, y0_, h_, fr_, bc_)   -- (a number alone in a bar's middle: as big as the bar lets it - fr_/bc_: two-tone)
+                local k_ = 1;
+                imgui.SetWindowFontScale(fs0 * 1.2);
+                local _, nh_ = imgui.CalcTextSize(cs); nh_ = tonumber(nh_) or 10;
+                k_ = math.max(0.5, math.min(1.15, (h_ * 1.0) / nh_));
+                imgui.SetWindowFontScale(fs0 * 1.2 * k_);
+                local nw_, nh2 = imgui.CalcTextSize(cs); nw_, nh2 = tonumber(nw_) or 0, tonumber(nh2) or 10;
+                local tx_ = x0_ + (w_ - nw_) / 2;
+                local cy_ = y0_ + h_ / 2 + nh2 * 0.10;                 -- (centred by eye: the font's line keeps room under it, digits sat high)
+                local function ot_(x, y, str, c, al)
+                    for _, d in ipairs({ { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 } }) do text(dl, x + d[1], y + d[2], str, { 0.12, 0.07, 0.02, 0.45 * al }); end
+                    text(dl, x, y, str, { c[1], c[2], c[3], al });
+                end
+                if fr_ and bc_ then                                  -- (two-tone: dark over the filled part, the bar's own colour over the empty part -
+                    local fx_ = x0_ + w_ * math.max(0, math.min(1, fr_));   --  the colour turns exactly at the fill's edge, even inside a digit)
+                    local ya_, yb2_ = y0_ - h_, y0_ + h_ * 2;
+                    local lite = { bc_[1] + (1 - bc_[1]) * 0.30, bc_[2] + (1 - bc_[2]) * 0.30, bc_[3] + (1 - bc_[3]) * 0.30 };
+                    dl:PushClipRect({ tx_ - 4, ya_ }, { fx_, yb2_ }, true);
+                    text(dl, tx_, cy_ - nh2 / 2, cs, { 0.07, 0.05, 0.04, v * ta });
+                    dl:PopClipRect();
+                    dl:PushClipRect({ fx_, ya_ }, { tx_ + nw_ + 4, yb2_ }, true);
+                    ot_(tx_, cy_ - nh2 / 2, cs, lite, v * ta);
+                    dl:PopClipRect();
+                else
+                    ot_(tx_, cy_ - nh2 / 2, cs, { 1, 1, 1 }, v * ta);
+                end
+                imgui.SetWindowFontScale(fs0);
+            end
+            mid_num(tostring(m.hp or 0), bx, bw, hy0_, hh_);
+            if hasmp then
+                mid_num(tostring(m.mp or 0), bx + bw * 0.12, bw * 0.88, my0_, mhh_);
+            end
+        end
+    end
+    if p < 1 then                                                    -- the turn: a gold light across the middle, brightest edge-on
+        local gl = (1 - k) ^ 2;
+        DL.L(dl, x1, ny, tip, ny, U4(GO2[1], GO2[2], GO2[3], 0.9 * gl * v), (1 + 2 * gl) * sc);
+    end
+end
+-- PARTY > Turned cards look 'tab' (last night's, kept as a choice): the job tag, the name and the yalms laid across the top
+-- edge, the TP in a block on the left, the bars to the plate's right end. ALLY.tabgeo1 / ALLY.nametop1 / ALLY.hexrow1.
+function ALLY.tabgeo1(m, i, x1, tip, y1, K, sc, k)
+    local fs = (FS or 1) * 0.74;
+    local dist = (cfg.party_dist ~= false and i ~= 0 and m.inzone) and (m.dist or (m.fake and (m.far and 32.4 or (3 + (i * 3.7) % 15))) or nil) or nil;
+    local ds = dist and string.format('%.1f', dist) or nil;
+    imgui.SetWindowFontScale(fs * 0.80 * C.dk());
+    local dw = ds and (tonumber((imgui.CalcTextSize(ds))) or 0) or 0;
+    imgui.SetWindowFontScale(fs);
+    local _, nh = imgui.CalcTextSize('A'); nh = tonumber(nh) or 12;
+    local tch = math.max(4, (nh * 0.74) / 0.78);                     -- (the job tag: as tall as the name's capitals)
+    local tgw = ALLY.tagw(tch, sc) * 0.88;
+    local nm = (m.name or '?'):upper();
+    local sp = 1.0 * sc;
+    local x0 = x1 + K + 4 * sc;
+    local room = (tip - K - 6 * sc) - x0 - tgw - 5 * sc - (ds and (dw + 6 * sc) or 0);
+    if spaced_w(nm, sp) > room then
+        while #nm > 2 and spaced_w(nm .. '.', sp) > room do nm = nm:sub(1, -2); end
+        nm = nm .. '.';
+    end
+    ALLY.tabw = ALLY.tabw or {};
+    local w_ = ALLY.tabw[m.name or ('m' .. tostring(i))] or (tgw + 5 * sc + spaced_w(nm, sp) + (ds and (dw + 6 * sc) or 0));
+    return { x0 = x0, nm = nm, sp = sp, ds = ds, dw = dw, far = dist and dist > (tonumber(cfg.party_range) or 20.8), nh = nh, fs = fs,
+             tch = tch, tgw = tgw, k = k or 1, w = w_, x1 = x1, K = K };
+end
+function ALLY.nametop1(dl, T, m, i, y1, sc, a, nc, v, live, fill)
+    if T.k < 0.9 then return; end                                    -- (while turning: nothing on the edge)
+    C.fullclip(dl);                                                  -- (over the plate's edge: never cut by the list's window)
+    local ty = y1 - T.nh * 0.55;                                     -- (the capitals' middle on the edge line)
+    local capm = ty + T.nh * 0.55;
+    local th_ = math.floor(T.nh * 0.74 + 0.5);                       -- (as tall as the name's capitals, on their middle)
+    local tcy = ty + T.nh * 0.44;
+    local tx0 = T.x1 + T.K - ((tcy + th_ / 2) - y1);                 -- (its foot's left corner on the plate's top-left cut, carried on: its left side
+    ALLY.tagk, ALLY.tagh, ALLY.tagl = 0.85, th_, true;               --  at the cut's slant - one line with the bezel)
+    local ok_, te_ = pcall(ALLY.tag, dl, m, i, tx0, tcy, T.tch, sc, v, live);
+    ALLY.tagk, ALLY.tagh, ALLY.tagl = nil, nil, nil;
+    local x = ((ok_ and tonumber(te_)) or (T.x0 + T.tgw)) + 5 * sc;
+    imgui.SetWindowFontScale(T.fs);
+    local oc = U4(0.02, 0.015, 0.03, 0.9 * a);                       -- (a dark rim: they read over the line and the plate alike)
+    for _, d in ipairs({ { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 }, { 1, 1 } }) do spaced(dl, x + d[1], ty + d[2], T.nm, oc, T.sp); end
+    local nw = spaced(dl, x, ty, T.nm, U4(nc[1], nc[2], nc[3], a), T.sp);
+    if T.ds then                                                     -- (how far, in yalms - pink out of range)
+        imgui.SetWindowFontScale(T.fs * 0.80 * C.dk());
+        local _, lh_ = imgui.CalcTextSize(T.ds);
+        lh_ = tonumber(lh_) or T.nh;
+        local dx, dy = x + nw + 6 * sc, ty + T.nh * 0.78 - lh_ * 0.78;   -- (on the name's baseline)
+        for _, d in ipairs({ { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 } }) do text(dl, dx + d[1], dy + d[2], T.ds, { 0.02, 0.015, 0.03, 0.9 * a }); end
+        text(dl, dx, dy, T.ds, T.far and { 1, 0.55, 0.75, a } or { 0.86, 0.85, 0.92, a });
+        local dw2 = imgui.CalcTextSize(T.ds);
+        ALLY.tabw[m.name or ('m' .. tostring(i))] = (dx + (tonumber(dw2) or 0)) - T.x0;
+    else
+        ALLY.tabw[m.name or ('m' .. tostring(i))] = (x + nw) - T.x0;
+    end
+    dl:PopClipRect();
+end
+function ALLY.hexrow1(dl, m, i, x1, tip, ny, ch, lh, sc, v, party, live)
     local now = os.clock();
     local fs0 = (FS or 1) * 0.80;
     local GO, GO2, DK = C.HEXHP[1], { 1, 0.90, 0.62 }, { 0.79, 0.65, 0.35 };
@@ -6557,43 +7449,30 @@ function ALLY.hexrow(dl, m, i, x1, tip, ny, ch, lh, sc, v, party, live)
     local Kr = K;
     ALLY.nroom = ALLY.nroom or {};
     ALLY.nroom[i] = 0;
+    if bk then                                                       -- (turned: no right box - the plate that much shorter, taken off its LEFT end so
+        local cut_ = 0;                                              --  (full length: lined up with the cards not turned)
+        x1 = x1 + cut_;
+        ALLY.nroom[i] = -cut_;
+    end
     -- the plate (one piece; your party's TP in a compartment at its right end)
     local plate = { { x1 + K, y1 }, { tip, y1 }, { tip, y2 - K }, { tip - K, y2 }, { x1, y2 }, { x1, y1 + K } };
+    local TB = (bk and ta > 0) and ALLY.tabgeo1(m, i, x1, tip, y1, K, sc, k) or nil;   -- (turned: the name's tab, part of the plate)
+    local outl = plate;
+    if TB and party and live and m.name ~= nil and m.name == ALLY.first_name then ALLY.tab1 = { x1 = x1, tip = tip, y1 = y1, t = now }; end
+    if false then outl = { { x1 + K, y1 }, { tip, y1 }, { tip, y2 - K }, { tip - K, y2 }, { x1, y2 }, { x1, y1 + K } }; end
     local CR = { 1, 0.94, 0.78 };                                    -- (your target's edge: Hex link's gold-cream, as its frames)
     local ec = low and { 1.0, 0.32, 0.36 } or (tgt and CR or DK);
     local ea = low and (0.55 + 0.45 * beat) or (tgt and 0.95 or 0.45);
     if warn then ec, ea = warn, 0.95; end
-    if low then pcall(ALLY.glow_ring, dl, plate, (1.2 + 1.6 * beat) * sc, U4(1.0, 0.24, 0.30, (0.12 + 0.28 * beat) * v)); end
-    if warn then pcall(ALLY.glow_ring, dl, plate, 2.4 * sc, U4(warn[1], warn[2], warn[3], 0.30 * v)); end   -- (yellow / orange: a steady glow round it - the gold edge alone hid it)
+    if TB then C.fullclip(dl); end                                   -- (the tab reaches over the plate's top: never cut by the list's window)
+    if low then pcall(ALLY.glow_ring, dl, outl, (1.2 + 1.6 * beat) * sc, U4(1.0, 0.24, 0.30, (0.12 + 0.28 * beat) * v)); end
+    if warn then pcall(ALLY.glow_ring, dl, outl, 2.4 * sc, U4(warn[1], warn[2], warn[3], 0.30 * v)); end   -- (yellow / orange: a steady glow round it - the gold edge alone hid it)
     pcall(function() dl:AddConvexPolyFilled(plate, tgt and U4(0.085, 0.085, 0.115, 0.88 * v) or U4(0.067, 0.059, 0.09, 0.86 * v)); end);   -- (the picked one a touch lighter)
     if warn then pcall(function() dl:AddConvexPolyFilled(plate, U4(warn[1], warn[2], warn[3], 0.08 * v)); end); end
-    local tw = bk and (TWb + 10 * sc) or (party and 36 * sc or 0);  -- (the right box's width: the TP's - turned, the job tag's)
+    local tw = bk and 0 or (party and 36 * sc or 0);                 -- (the right box's width: the TP's - turned, none: the tag is in the name's tab)
     local cut = tip - tw;                                            -- (its slanted cut: from cut + sl at the top to cut - sl at the foot)
     local sl = 4 * sc * k;
-    if bk then
-        DL.L(dl, cut + sl, y1 + 2 * sc, cut - sl, y2 - 2 * sc, U4(DK[1], DK[2], DK[3], 0.45 * v), 1);
-        local cx = cut + (tip - cut) / 2;
-        if p >= 1 and k >= 0.99 then                                 -- (up in the plate's top-right corner - its right side and top along the plate's,
-            local slope_ = (2 * sl) / math.max(1, (y2 - y1) - 4 * sc);   --  its left leaning as the divider; the distance under it)
-            local th_ = math.floor((y2 - y1) * 0.48);
-            local t0_ = y1 + 3 * sc;
-            ALLY.tag(dl, m, i, tip - 3 * sc - TWb, t0_ + th_ / 2, ch * 0.78, sc, v, live, false, { t0_, t0_ + th_, 0, slope_ });
-            local dist = (i ~= 0 and m.inzone) and (m.dist or (m.fake and (m.far and 32.4 or (3 + (i * 3.7) % 15))) or nil) or nil;
-            if dist and cfg.party_dist ~= false then                 -- (how far, in yalms - pink out of range)
-                local dstr = string.format('%.1f', dist);
-                imgui.SetWindowFontScale(fs0 * 0.72);
-                local dw_, dh_ = imgui.CalcTextSize(dstr);
-                dw_, dh_ = tonumber(dw_) or 0, tonumber(dh_) or 10;
-                local far_ = dist > (tonumber(cfg.party_range) or 20.8);
-                local yy_ = t0_ + th_ + ((y2 - 2 * sc) - (t0_ + th_) - dh_) / 2;
-                text(dl, tip - 3 * sc - TWb / 2 - dw_ / 2 + 2 * sc, yy_, dstr, far_ and { 1, 0.55, 0.75, v } or { 0.84, 0.83, 0.90, 0.9 * v });
-                imgui.SetWindowFontScale(fs0);
-            end
-        else                                                         -- (while turning: a stripe of its colour)
-            local tc = ALLY.tagcol(m.job)[1];
-            local th_ = ch * 0.5 * k;
-            DL.RF(dl, cx - TWb / 2, ny - th_ / 2, cx + TWb / 2, ny + th_ / 2, U4(tc[1], tc[2], tc[3], v * dim));
-        end
+    if bk then                                                       -- (turned: no right box - the job tag and the distance are in the name's tab)
     elseif party then
         local full = tp >= 1000;
         if full then                                                 -- (lit gold from 1000, breathing)
@@ -6617,25 +7496,40 @@ function ALLY.hexrow(dl, m, i, x1, tip, ny, ch, lh, sc, v, party, live)
         end
     end
     if tgt and not low then                                          -- (your target: the arrow's soft glow round its edge)
-        for q = 1, 6 do dl:AddLine(plate[q], plate[q % 6 + 1], U4(1, 0.80, 0.43, 0.22 * v), 4 * sc); end
+        for q = (TB and 2 or 1), #outl do dl:AddLine(outl[q], outl[q % #outl + 1], U4(1, 0.80, 0.43, 0.22 * v), 4 * sc); end
     end
-    for q = 1, 6 do dl:AddLine(plate[q], plate[q % 6 + 1], U4(ec[1], ec[2], ec[3], ea * v), warn and 1.8 or (tgt and 1.4 or 1)); end
+    for q = 1, #outl do                                              -- (turned: the top edge stops either side of the tag, name and distance on it)
+        local ecol, ew = U4(ec[1], ec[2], ec[3], ea * v), warn and 1.8 or (tgt and 1.4 or 1);
+        if TB and q == 1 and TB.k >= 0.9 then
+            local gaps = { { TB.x0 - 4 * sc, TB.x0 + TB.w + 5 * sc } };
+            local LG = ALLY.labgap;
+            if LG and not party and LG.name ~= nil and LG.name == m.name then gaps[2] = { LG.a, LG.b }; end   -- (the alliance's title on its first plate)
+            local xa_ = outl[1][1];
+            for _, g in ipairs(gaps) do
+                if g[1] > xa_ then dl:AddLine({ xa_, y1 }, { math.min(g[1], outl[2][1]), y1 }, ecol, ew); end
+                xa_ = math.max(xa_, g[2]);
+            end
+            if xa_ < outl[2][1] then dl:AddLine({ xa_, y1 }, outl[2], ecol, ew); end
+        else
+            dl:AddLine(outl[q], outl[q % #outl + 1], ecol, ew);
+        end
+    end
+    if TB then dl:PopClipRect(); end
     if k > 0.9 then
         local cc = warn or (tgt and CR or GO2);                                -- (the cuts lit, as Hex link's frames - cream on your target)
         DL.L(dl, x1, y1 + K, x1 + K, y1, U4(cc[1], cc[2], cc[3], (tgt and 1 or 0.6) * v), 1.6 * sc);
         DL.L(dl, tip - K, y2, tip, y2 - K, U4(cc[1], cc[2], cc[3], (tgt and 1 or 0.6) * v), 1.6 * sc);
-        if m.leader or m.aleader then                                -- (the leader's dots on the plate's top-left cut, one over the other along
-            local n_ = m.aleader and 3 or 2;                         --  its slant - front and turned; gold to azure, as LEAD_MARK)
+        if m.leader or m.aleader then                                -- (the leader's dots at the plate's right end, one over the other, just outside
+            local n_ = m.aleader and 3 or 2;                         --  its edge - front and turned; gold to azure, as LEAD_MARK)
             local rr = 4.5 * sc * 0.46 * 1.12;
             local step = rr * 2.15;
-            local ux, uy = 0.7071, -0.7071;                          -- (along the cut, up to the right)
-            local mx_, my_ = x1 + K / 2 - rr * 1.25, y1 + K / 2 - rr * 1.25;   -- (its middle, just outside the frame)
-            local g1, g2 = C.GOLDH, C.HEXMP[1];
+            local mx_, my_ = tip + rr + 3 * sc, ny;
+            local g1, g2 = C.GOLDH, (YUI_TINT_ON and { 0.96, 0.97, 1.0 } or C.HEXMP[1]);   -- (Void red: red and white)
             C.fullclip(dl);                                          -- (outside the plate: never cut by the list's window)
             for q = 1, n_ do
                 local u = (q - 1) / math.max(1, n_ - 1);
                 local o_ = (q - (n_ + 1) / 2) * step;
-                local px, py = mx_ - ux * o_, my_ - uy * o_;         -- (the first - gold - at the top right)
+                local px, py = mx_, my_ + o_;                        -- (the first - gold - at the top)
                 C.hexdot(dl, px, py, rr + 1.2, U4(0, 0, 0, 0.7 * v * dim));
                 C.hexdot(dl, px, py, rr, U4(g1[1] + (g2[1] - g1[1]) * u, g1[2] + (g2[2] - g1[2]) * u, g1[3] + (g2[3] - g1[3]) * u, v * dim));
             end
@@ -6645,9 +7539,10 @@ function ALLY.hexrow(dl, m, i, x1, tip, ny, ch, lh, sc, v, party, live)
     -- the job's tag (its click folds the buffs; while turning: a stripe of its colour)
     local tend;
     if bk then
-        tend = x1 + 5 * sc + TWb * 0.95;                             -- (the TP where the tag is on the front - drawn with the bars, under the name -
-                                                                     --  the bars start clear of the 4 letters;
-                                                                     --  the alliance's too)
+        imgui.SetWindowFontScale(fs0 * 0.78 * C.tpk());                        -- (the TP where the tag is on the front: its block just as wide as "3000" -
+        local w3_ = tonumber((imgui.CalcTextSize('3000'))) or 30;    --  the name is over the plate now, the bars get the rest; the alliance's too)
+        imgui.SetWindowFontScale(fs0);
+        tend = x1 + K * 0.5 + 4 * sc + w3_ + 2 * sc;
     elseif p >= 1 and k >= 0.99 then
         tend = ALLY.tag(dl, m, i, x1 + 5 * sc, ny, ch * 0.78, sc, v, live);
     else
@@ -6657,7 +7552,7 @@ function ALLY.hexrow(dl, m, i, x1, tip, ny, ch, lh, sc, v, party, live)
         tend = x1 + 39 * sc;
     end
     local bx = tend + 7 * sc;
-    local bw = ((party or bk) and (cut - sl - 7 * sc) or (tip - 8 * sc)) - bx;   -- (turned: the alliance's plates have the tag's box too)
+    local bw = (bk and (tip - K * 0.5 - 7 * sc) or (party and (cut - sl - 7 * sc) or (tip - 8 * sc))) - bx;   -- (turned: the bars to the plate's end)
     local top = ny - ch / 2 + 3 * sc;
     if face and m.inzone then                                        -- (turned: the name a little smaller when the numbers under it need the room - big plates)
         imgui.SetWindowFontScale(FS or 1);                           -- (the name's size, as ALLY.hex draws the plates)
@@ -6672,27 +7567,17 @@ function ALLY.hexrow(dl, m, i, x1, tip, ny, ch, lh, sc, v, party, live)
         local nc = low and { 1, 0.62 + 0.38 * (1 - beat), 0.62 + 0.38 * (1 - beat) } or { 1, 1, 1 };
         local nx0 = bk and (x1 + K * 0.6 + 4 * sc) or bx;            -- (turned: the name from the plate's left, over the TP)
         local lmw = 0;                                               -- (the leader's dots: on the plate's top-left cut now, not before the name)
-        local nm = (m.name or '?'):upper();
+        local nm = bk and '' or (m.name or '?'):upper();             -- (turned: the name is over the plate - ALLY.nametop)
         local sp = 1.2 * sc;
         local dist = (cfg.party_dist ~= false and i ~= 0 and m.inzone and not bk) and (m.dist or (m.fake and (m.far and 32.4 or (3 + (i * 3.7) % 15))) or nil) or nil;
         local room = (bk and (bx - 3 * sc - nx0) or bw) - lmw - (dist and 30 * sc or 0);
         local nfk = nil;
-        if bk then                                                   -- (turned: its first 4 letters, in the left column over the TP - the bars get
-            nm = nm:sub(1, 4);                                       --  the plate's whole height; smaller if they don't fit the column)
-            sp = 0.6 * sc;
-            local w0 = spaced_w(nm, sp);
-            if w0 > room and room > 4 then
-                nfk = math.max(0.55, room / w0);
-                local cur = (FS or 1) * 0.78;
-                pcall(function() cur = imgui.GetWindowFontScale and imgui.GetWindowFontScale() or cur; end);
-                imgui.SetWindowFontScale(((FS or 1) * 0.78) * nfk);
-            end
-        end
         if spaced_w(nm, sp) > room and not bk then
             while #nm > 2 and spaced_w(nm .. '.', sp) > room do nm = nm:sub(1, -2); end
             nm = nm .. '.';
         end
-        local nw = spaced(dl, nx0 + lmw, top, nm, U4(nc[1], nc[2], nc[3], v * ta * dim), sp);
+        local nw = bk and 0 or spaced(dl, nx0 + lmw, top, nm, U4(nc[1], nc[2], nc[3], v * ta * dim), sp);
+        if TB then pcall(ALLY.nametop1, dl, TB, m, i, y1, sc, v * ta * dim, nc, v, live and p >= 1); imgui.SetWindowFontScale(fs0); end
         if dist then
             local dstr = string.format('%.1f', dist);
             imgui.SetWindowFontScale(fs0 * 0.62);
@@ -6715,7 +7600,7 @@ function ALLY.hexrow(dl, m, i, x1, tip, ny, ch, lh, sc, v, party, live)
                 if C.jobcol(m) then hc1, hc2 = C.jhp(m, 1), C.jhp(m, 2); end   -- (BARS > HP colour by job)
                 do local h1_, h2_ = C.hpheat(m, hp); if h1_ then hc1, hc2 = h1_, h2_; end end   -- (under 75%: orange, under 50%: red-orange)
                 if low then
-                    local function red(c) return { c[1] + (1.0 - c[1]) * (0.7 + 0.3 * beat), c[2] + (0.30 - c[2]) * (0.7 + 0.3 * beat), c[3] + (0.34 - c[3]) * (0.7 + 0.3 * beat) }; end
+                    local function red(c) return { c[1] + (1.0 - c[1]) * (0.7 + 0.3 * beat), c[2] + (C.LOWC()[2] - c[2]) * (0.7 + 0.3 * beat), c[3] + (C.LOWC()[3] - c[3]) * (0.7 + 0.3 * beat) }; end
                     hc1, hc2 = red(hc1), red(hc2);
                 end
                 C.hexbar(dl, bx, hy - 1, bw, 2, hp, lagged('hx' .. i, hp, dt), i, { c1 = hc1, c2 = hc2, band = hb, al = v * ta });
@@ -6738,19 +7623,22 @@ function ALLY.hexrow(dl, m, i, x1, tip, ny, ch, lh, sc, v, party, live)
             local hc1, hc2 = C.HEXHP[1], C.HEXHP[2];                   -- (the same colours as the plate's front bar)
             if C.jobcol(m) then hc1, hc2 = C.jhp(m, 1), C.jhp(m, 2); end
             do local h1_, h2_ = C.hpheat(m, m.hpp); if h1_ then hc1, hc2 = h1_, h2_; end end   -- (the same heat as the front)
-            if low then hc1, hc2 = { 1, 0.55, 0.56 }, { 1, 0.30, 0.34 }; end
+            if low then hc1, hc2 = C.LOWC(1), C.LOWC(); end
             local yb_ = y2 - 3 * sc;                                 -- (under the name, as the front's: HP the whole width, MP under it - the
             local gap_ = 2 * sc;                                     --  front's shapes, taller, their numbers inside; HP the taller)
-            local hh_ = hasmp and (yb_ - ry - gap_) * 0.56 or (yb_ - ry);   -- (HP the taller, MP under it in the same shape, a little shorter - each
+            local hh_ = hasmp and (yb_ - ry - gap_) * 0.56 or (yb_ - ry);   -- (HP its usual size; MP thin, resting on its foot - as the target's bars -
+            local mhh_ = (yb_ - ry) * 0.30;                          --  the two together in the middle of the plate)
+            local hy0_ = hasmp and (ry + ((yb_ - ry) - (hh_ + mhh_ * 0.90)) / 2) or ry;
+            local my0_ = hy0_ + hh_ - mhh_ * 0.10;                   -- (only its top edge over the HP's foot: the numbers clear of each other)   -- (HP the taller, MP under it in the same shape, a little shorter - each
             local dt_ = imgui.GetIO().DeltaTime or 0.016;                    --  its number in its middle)
-            C.hexbar(dl, bx, ry + hh_ / 2 - 1, bw, 2, m.hpp or 0, lagged('hx' .. i, m.hpp or 0, dt_), i, { c1 = hc1, c2 = hc2, band = hh_, al = v * ta });
+            C.hexbar(dl, bx, hy0_ + hh_ / 2 - 1, bw, 2, m.hpp or 0, lagged('hx' .. i, m.hpp or 0, dt_), i, { c1 = hc1, c2 = hc2, band = hh_, al = v * ta, empty = 0.30 });
             if hasmp then
-                local my_, mh_ = ry + hh_ + gap_, yb_ - (ry + hh_ + gap_);
+                local my_, mh_ = my0_, mhh_;                            -- (its top over the HP's foot: laid on it)
                 local mw_ = bw * 0.88;
-                C.hexbar(dl, bx, my_ + mh_ / 2 - 1, mw_, 2, mpp, lagged('mx' .. i, mpp, dt_), i + 50,
-                    { c1 = AZ, c2 = { AZ[1] * 0.55, AZ[2] * 0.70, AZ[3] * 0.95 }, band = mh_, al = v * ta });
+                C.hexbar(dl, bx + bw * 0.12, my_ + mh_ / 2 - 1, mw_, 2, mpp, lagged('mx' .. i, mpp, dt_), i + 50,   -- (moved ahead: its right point under the HP's)
+                    { c1 = AZ, c2 = { AZ[1] * 0.55, AZ[2] * 0.70, AZ[3] * 0.95 }, band = mh_, al = v * ta, empty = 0.30 });
             end
-            local function mid_num(cs, x0_, w_, y0_, h_)             -- (a number alone in a bar's middle: as big as the bar lets it)
+            local function mid_num(cs, x0_, w_, y0_, h_, fr_, bc_)   -- (a number alone in a bar's middle: as big as the bar lets it - fr_/bc_: two-tone)
                 local k_ = 1;
                 imgui.SetWindowFontScale(fs0 * 1.2);
                 local _, nh_ = imgui.CalcTextSize(cs); nh_ = tonumber(nh_) or 10;
@@ -6763,34 +7651,41 @@ function ALLY.hexrow(dl, m, i, x1, tip, ny, ch, lh, sc, v, party, live)
                     for _, d in ipairs({ { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 } }) do text(dl, x + d[1], y + d[2], str, { 0.12, 0.07, 0.02, 0.45 * al }); end
                     text(dl, x, y, str, { c[1], c[2], c[3], al });
                 end
-                ot_(tx_, cy_ - nh2 / 2, cs, { 1, 1, 1 }, v * ta);
+                if fr_ and bc_ then                                  -- (two-tone: dark over the filled part, the bar's own colour over the empty part -
+                    local fx_ = x0_ + w_ * math.max(0, math.min(1, fr_));   --  the colour turns exactly at the fill's edge, even inside a digit)
+                    local ya_, yb2_ = y0_ - h_, y0_ + h_ * 2;
+                    local lite = { bc_[1] + (1 - bc_[1]) * 0.30, bc_[2] + (1 - bc_[2]) * 0.30, bc_[3] + (1 - bc_[3]) * 0.30 };
+                    dl:PushClipRect({ tx_ - 4, ya_ }, { fx_, yb2_ }, true);
+                    text(dl, tx_, cy_ - nh2 / 2, cs, { 0.07, 0.05, 0.04, v * ta });
+                    dl:PopClipRect();
+                    dl:PushClipRect({ fx_, ya_ }, { tx_ + nw_ + 4, yb2_ }, true);
+                    ot_(tx_, cy_ - nh2 / 2, cs, lite, v * ta);
+                    dl:PopClipRect();
+                else
+                    ot_(tx_, cy_ - nh2 / 2, cs, { 1, 1, 1 }, v * ta);
+                end
                 imgui.SetWindowFontScale(fs0);
             end
-            mid_num(tostring(m.hp or 0), bx, bw, ry, hh_);
+            mid_num(tostring(m.hp or 0), bx, bw, hy0_, hh_);
             if hasmp then
-                local my2_ = ry + hh_ + gap_;
-                mid_num(tostring(m.mp or 0), bx, bw * 0.88, my2_, yb_ - my2_);
+                mid_num(tostring(m.mp or 0), bx + bw * 0.12, bw * 0.88, my0_, mhh_);
             end
-            do                                                       -- (the TP at the left, under the name - gold from 1000; the alliance's too)
-                do                                                   -- (the left part divided: a line down beside the bars, one across under the name -
-                    local lc_ = U4(DK[1], DK[2], DK[3], 0.45 * v * ta);  --  the divider's thin gold, as the right box's)
-                    local vx_ = bx - 4 * sc;
-                    DL.L(dl, vx_, y1 + 3 * sc, vx_, y2 - 3 * sc, lc_, 1);
-                    local hy_ = math.floor(nbot + 1.5 * sc) + 0.5;
-                    DL.L(dl, x1 + 3 * sc, hy_, vx_, hy_, lc_, 1);
-                end
-                local full = tp >= 1000;                             -- ("TP 1350" on one line at the bottom-left, under the name)
-                local tx_ = x1 + K * 0.6 + 4 * sc;
-                imgui.SetWindowFontScale(fs0 * 0.50);
+            do                                                       -- (the TP alone in the left block - "TP" over the number, in its middle; gold from 1000)
+                local lc_ = U4(DK[1], DK[2], DK[3], 0.45 * v * ta);
+                local vx_ = bx - 4 * sc;
+                DL.L(dl, vx_, y1 + 3 * sc, vx_, y2 - 3 * sc, lc_, 1);   -- (the divider beside the bars)
+                local full = tp >= 1000;
+                local cx_ = (x1 + K * 0.3 + vx_) / 2;
+                imgui.SetWindowFontScale(fs0 * 0.50 * C.tpk());
                 local lw, lhh = imgui.CalcTextSize('TP');
-                imgui.SetWindowFontScale(fs0 * 0.78);
+                imgui.SetWindowFontScale(fs0 * 0.78 * C.tpk());
                 local ts = tostring(tp);
                 local vw, vh = imgui.CalcTextSize(ts);
-                lw, lhh, vh = tonumber(lw) or 8, tonumber(lhh) or 8, tonumber(vh) or 12;
-                local foot = math.min(yb_ + 1 * sc, (nbot + yb_) / 2 + vh / 2 + 2 * sc);   -- (both on one foot)
-                text(dl, tx_ + lw + 3 * sc, foot - vh, ts, full and { GO2[1], GO2[2], GO2[3], v * ta } or { 0.80, 0.79, 0.88, 0.85 * v * ta });
-                imgui.SetWindowFontScale(fs0 * 0.50);
-                text(dl, tx_, foot - lhh - vh * 0.08, 'TP', full and { GO[1], GO[2], GO[3], 0.85 * v * ta } or { 0.62, 0.60, 0.72, 0.8 * v * ta });
+                lw, lhh, vw, vh = tonumber(lw) or 8, tonumber(lhh) or 8, tonumber(vw) or 20, tonumber(vh) or 12;
+                local top_ = ny - (lhh * 1.1 + vh) / 2 + 3 * sc;           -- (a little lower, "TP" clear of the number)
+                text(dl, cx_ - vw / 2, top_ + lhh * 1.1, ts, full and { GO2[1], GO2[2], GO2[3], v * ta } or { 0.80, 0.79, 0.88, 0.85 * v * ta });
+                imgui.SetWindowFontScale(fs0 * 0.50 * C.tpk());
+                text(dl, cx_ - lw / 2, top_, 'TP', full and { GO[1], GO[2], GO[3], 0.85 * v * ta } or { 0.62, 0.60, 0.72, 0.8 * v * ta });
                 imgui.SetWindowFontScale(fs0);
             end
         end
@@ -6799,6 +7694,127 @@ function ALLY.hexrow(dl, m, i, x1, tip, ny, ch, lh, sc, v, party, live)
         local gl = (1 - k) ^ 2;
         DL.L(dl, x1, ny, tip, ny, U4(GO2[1], GO2[2], GO2[3], 0.9 * gl * v), (1 + 2 * gl) * sc);
     end
+end
+-- PARTY > Turned cards look 'bare' (Hex link): no frame at all - the job tag and the name on top (how far at the HP bar's
+-- end), the TP under the tag, then the HP bar long and the MP bar after it on the same line, each its number in it
+function ALLY.hexrow2(dl, m, i, x1, tip, ny, ch, lh, sc, v, party, live)
+    local fs0 = (FS or 1) * 0.80;
+    local now = os.clock();
+    ALLY.nroom = ALLY.nroom or {};
+    ALLY.nroom[i] = 0;
+    local dim = m.inzone and 1 or 0.5;
+    local tgt = ALLY.is_tgt(m, i, ALLY.tidx_cur);
+    local hp = m.inzone and math.max(0, math.min(1, m.hpp or 0)) or 0;
+    local low = cfg.card_low ~= false and m.inzone and hp < 0.25;
+    local y1, y2 = ny - ch / 2, ny + ch / 2;
+    -- where the HP bar starts (after the TP's room): the job tag and the name line up with it
+    imgui.SetWindowFontScale(fs0 * 0.82 * C.tpk());
+    local w3 = tonumber((imgui.CalcTextSize('3000'))) or 24;
+    imgui.SetWindowFontScale(fs0 * 0.56 * C.tpk());
+    local lwT = tonumber((imgui.CalcTextSize('TP'))) or 8;
+    imgui.SetWindowFontScale(fs0);
+    local bx = x1 + 2 * sc + lwT + 2 * sc + w3 + 5 * sc;          -- (the TP's room, the bar right after it)
+    -- the top line: job tag, name, how far
+    local fs = (FS or 1) * 0.64;
+    imgui.SetWindowFontScale(fs);
+    local _, nh = imgui.CalcTextSize('A'); nh = tonumber(nh) or 12;
+    local ty = y1 + 3 * sc;                                          -- (the name and tag a touch lower, near the HP bar)
+    local th_ = math.floor(nh * 0.74 + 0.5);
+    ALLY.tagk, ALLY.tagh = 0.85, math.floor(nh * 1.05 + 0.5);       -- (its border taller than the letters: they read clear of the outline)
+    ALLY.tagol = true;                                               -- (a black outline round the job tag)
+    local ok_, te_ = pcall(function()                                             -- (its left side on the HP bar's frame: the same 45 degree line, carried up)
+        local tft_ = ty + nh * 0.44 + math.floor(nh * 1.05 + 0.5) / 2;   -- (its foot where it was; taller upward)
+        ALLY.tagh = math.floor(nh * 1.30 + 0.5);
+        local tcy_ = tft_ - ALLY.tagh / 2;
+        local hb_ = ((y2 - 2 * sc) - (ty + nh + 1 * sc)) * 0.78;
+        local hcy_ = (ty + nh + 1 * sc) + hb_ / 2;
+        local lx_ = bx - 1.5 + (hcy_ - tft_);                        -- (where the frame's upper-left edge reaches the tag's foot)
+        ALLY.tagdy = ALLY.tagh * 0.12;                               -- (its letters a little lower: the font sits high)
+        local r_ = ALLY.tag(dl, m, i, lx_, tcy_, ch, sc, v, live, false, { tcy_ - ALLY.tagh / 2, tft_, 0, 1.0 });
+        ALLY.tagdy = nil;
+        return r_;
+    end);
+    ALLY.tagol = nil;
+    ALLY.tagk, ALLY.tagh = nil, nil;
+    local tagend = (ok_ and tonumber(te_)) or (x1 + 40 * sc);
+    imgui.SetWindowFontScale(fs);
+    local nm = (m.name or '?'):upper():sub(1, 6);
+    local GO = C.HEXHP[1];
+    local nc = low and { 1, 0.55, 0.58 } or (tgt and { 1, 0.90, 0.62 } or { 1, 1, 1 });   -- (your target: its name in gold)
+    local a = v * dim;
+    for _, d in ipairs({ { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 }, { -1, -1 }, { 1, -1 }, { -1, 1 }, { 1, 1 } }) do spaced(dl, tagend + 1 * sc + d[1], ty + d[2], nm, U4(0, 0, 0, 0.95 * a), 1.0 * sc); end   -- (a full black outline: readable on any ground)
+    local nw = spaced(dl, tagend + 1 * sc, ty, nm, U4(nc[1], nc[2], nc[3], a), 1.0 * sc);
+    if tgt then DL.L(dl, tagend + 1 * sc, ty + nh + 0.5, tagend + 1 * sc + nw, ty + nh + 0.5, U4(GO[1], GO[2], GO[3], 0.8 * v), 1.2 * sc); end
+    if (m.leader or m.aleader) then pcall(ALLY.lead, dl, m, tagend + 1 * sc + nw + 6 * sc, ty + nh * 0.5, sc * 0.8, a); end
+    -- the TP under the tag, the bars beside it
+    local by0, by1 = ty + nh + 1 * sc, y2 - 2 * sc;
+    local bh = math.max(6 * sc, by1 - by0);
+    local bcy = by0 + bh / 2;
+    if m.tp ~= nil and m.inzone then
+        local tp = tonumber(m.tp) or 0;
+        local full = tp >= 1000;
+        imgui.SetWindowFontScale(fs0 * 0.56 * C.tpk());
+        local lw, lhh = imgui.CalcTextSize('TP'); lw, lhh = tonumber(lw) or 8, tonumber(lhh) or 7;
+        imgui.SetWindowFontScale(fs0 * 0.82 * C.tpk());
+        local vw, vh = imgui.CalcTextSize(tostring(tp)); vh = tonumber(vh) or 10;
+        local tx = bx - 5 * sc - (tonumber(vw) or 20) - 2 * sc - lw;   -- (right-aligned against the bar's start)
+        text(dl, tx + lw + 2 * sc, bcy - vh / 2, tostring(tp), full and { 1, 0.90, 0.62, a } or { 0.86, 0.85, 0.92, a });
+        imgui.SetWindowFontScale(fs0 * 0.56 * C.tpk());
+        text(dl, tx, bcy - vh / 2 + vh - lhh - 1 * sc, 'TP', full and { GO[1], GO[2], GO[3], 0.9 * a } or { 0.66, 0.64, 0.76, 0.9 * a });
+        imgui.SetWindowFontScale(fs0);
+    end
+    local mw = (tip - bx) * 0.40;                                    -- (HP long; MP resting on the lower half of its end - longer)
+    local hx2 = tip - mw * 0.55;
+    local dist = (cfg.party_dist ~= false and i ~= 0 and m.inzone) and (m.dist or (m.fake and (m.far and 32.4 or (3 + (i * 3.7) % 15))) or nil) or nil;
+    if dist then                                                     -- (how far, over the HP bar's end)
+        local ds = string.format('%.1f', dist);
+        imgui.SetWindowFontScale(fs * 1.0 * C.dk());                          -- (bigger, white on a black outline - pink out of range)
+        local dw, dh = imgui.CalcTextSize(ds); dw, dh = tonumber(dw) or 0, tonumber(dh) or nh;
+        local far_ = dist > (tonumber(cfg.party_range) or 20.8);
+        local dx, dy = math.max(hx2 - dw - 2 * sc, tagend + 1 * sc + nw + 8 * sc), ty + nh - dh;   -- (never over the name)
+        for _, d in ipairs({ { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 }, { -1, -1 }, { 1, -1 }, { -1, 1 }, { 1, 1 } }) do text(dl, dx + d[1], dy + d[2], ds, { 0, 0, 0, 0.95 * a }); end
+        text(dl, dx, dy, ds, far_ and { 1, 0.55, 0.75, a } or { 1, 1, 1, a });
+        imgui.SetWindowFontScale(fs0);
+    end
+    if not m.inzone then
+        pcall(C.zone_line, dl, m, bx, bcy - lh * 0.35, tip - bx, sc, v);
+        return;
+    end
+    local dt = imgui.GetIO().DeltaTime or 0.016;
+    local hc1, hc2 = C.HEXHP[1], C.HEXHP[2];
+    if C.jobcol(m) then hc1, hc2 = C.jhp(m, 1), C.jhp(m, 2); end
+    do local h1_, h2_ = C.hpheat(m, m.hpp); if h1_ then hc1, hc2 = h1_, h2_; end end
+    if low then hc1, hc2 = C.LOWC(1), C.LOWC(); end
+    local AZ = C.HEXMP[1];
+    local hb = bh * 0.78;                                            -- (HP a little thinner, the MP resting on its foot's end)
+    local hcy = by0 + hb / 2;
+    local mh = bh * 0.52;
+    local mcy = by0 + hb + mh * 0.15;                               -- (just under the HP's bottom edge: a little lower than half over it)
+    local mx0 = hx2 - mw * 0.45;
+    local function outline(x0, x2, cy, B)                            -- (a black edge round a bar's shape: pointed ends)
+        local k = math.min(B / 2, (x2 - x0) / 2);
+        local y0, y1 = cy - B / 2 - 1, cy + B / 2 + 1;
+        local P = { { x0 - 1.5, cy }, { x0 + k, y0 }, { x2 - k, y0 }, { x2 + 1.5, cy }, { x2 - k, y1 }, { x0 + k, y1 } };
+        for q = 1, 6 do dl:AddLine(P[q], P[q % 6 + 1], U4(0, 0, 0, 0.95 * v), 1.6); end
+    end
+    C.hexbar(dl, bx, hcy - 1, hx2 - bx, 2, m.hpp or 0, lagged('hx' .. i, m.hpp or 0, dt), i, { c1 = hc1, c2 = hc2, band = hb, al = v });
+    outline(bx, hx2, hcy, hb);
+    C.hexbar(dl, mx0, mcy - 1, tip - mx0, 2, m.mpp or 0, lagged('mx' .. i, m.mpp or 0, dt), i + 50, { c1 = AZ, c2 = { AZ[1] * 0.55, AZ[2] * 0.70, AZ[3] * 0.95 }, band = mh, al = v });
+    outline(mx0, tip, mcy, mh);
+    local function num(cs, x0, x2, cy_, B_)                          -- (its number in its middle, as big as the bar lets it)
+        local bcy = cy_;
+        imgui.SetWindowFontScale(fs0 * 1.2);
+        local _, h_ = imgui.CalcTextSize(cs); h_ = tonumber(h_) or 10;
+        local k_ = math.max(0.5, math.min(1.15, B_ / h_));
+        imgui.SetWindowFontScale(fs0 * 1.2 * k_);
+        local w_, h2_ = imgui.CalcTextSize(cs); w_, h2_ = tonumber(w_) or 0, tonumber(h2_) or 10;
+        local tx_, ty_ = (x0 + x2) / 2 - w_ / 2, bcy - h2_ / 2 + h2_ * 0.08;
+        for _, d in ipairs({ { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 } }) do text(dl, tx_ + d[1], ty_ + d[2], cs, { 0.12, 0.07, 0.02, 0.45 * v }); end
+        text(dl, tx_, ty_, cs, { 1, 1, 1, v });
+        imgui.SetWindowFontScale(fs0);
+    end
+    num(tostring(m.hp or 0), bx, hx2 - mw * 0.25, hcy, hb);
+    num(tostring(m.mp or 0), mx0 + mw * 0.2, tip, mcy, mh);
 end
 -- One whole card (centred on ny, from x1 to tip): the card, its edge, the MP bar (your party), the hat, the name and HP %.
 -- live = its hat is alive (a click folds the buffs); off for the settings' preview.
@@ -6820,7 +7836,20 @@ function ALLY.card_(dl, m, i, x1, tip, ny, ch, lh, sc, v, party, live)
         local dy = math.sin(t * 39 + i * 5) * 0.6 * k;
         x1, tip, ny = x1 + dx, tip + dx, ny + dy;
     end
-    if ALLY.hexrows() then return ALLY.hexrow(dl, m, i, x1, tip, ny, ch, lh, sc, v, party, live); end   -- (Hex link: Hex bars)
+    ALLY.nroom = ALLY.nroom or {};
+    ALLY.nroom[i] = 0;                                               -- (a turned card sets its own: the buffs and the arrow follow it in)
+    ALLY.byoff = ALLY.byoff or {};
+    ALLY.byoff[i] = 0;
+    if ALLY.hexrows() then
+        if cfg.turn_look == 'tab' then                               -- (PARTY > Turned cards: the other looks - turned plates only)
+            local f_ = ALLY.fl(m.name or ('m' .. i));
+            if f_ and (f_.back or os.clock() - f_.t < 0.46) then return ALLY.hexrow1(dl, m, i, x1, tip, ny, ch, lh, sc, v, party, live); end
+        elseif cfg.turn_look == 'bare' then                          -- (no frame: once it has turned - the turn itself as the plate's)
+            local f_ = ALLY.fl(m.name or ('m' .. i));
+            if f_ and f_.back and os.clock() - f_.t >= 0.46 then return ALLY.hexrow2(dl, m, i, x1, tip, ny, ch, lh, sc, v, party, live); end
+        end
+        return ALLY.hexrow(dl, m, i, x1, tip, ny, ch, lh, sc, v, party, live);   -- (Hex link: Hex bars)
+    end
     do                                                               -- (Normal: a card turned over, or turning)
         local f = ALLY.fl(m.name or ('m' .. i));
         if f and (f.back or os.clock() - f.t < 0.46) then return ALLY.nflip(dl, m, i, x1, tip, ny, ch, lh, sc, v, party, live, f); end
@@ -7056,17 +8085,18 @@ function ALLY.hide_k()                                               -- 0 shown 
     local h = ALLY.hk or 0;
     return h * h * (3 - 2 * h);
 end
-function ALLY.head_icons(dl, x, cy, sc)                              -- the arrow and the anchor, left of the PARTY title
+function ALLY.head_icons(dl, x, cy, sc, pos)                         -- the arrow and the anchor, left of the PARTY title (pos: their own places)
     local r = {};
     local bs = 14 * sc;
-    local ax = x - bs;                                               -- the anchor: two dots, joined while the alliances are anchored
+    local ax = pos and pos.ax or (x - bs);                           -- the anchor: two dots, joined while the alliances are anchored
+    if pos and pos.ay then cy = pos.ay; end                          -- (pos.ay: the three lower, right over the plate)
     local on = cfg.ally_anchor == true;
     local hv = ALLY.hbh.anchor;
     local c = on and { 0.86, 0.58, 1.0, hv and 1 or 0.9 } or { 0.62, 0.60, 0.70, hv and 1 or 0.7 };
     local cxa = ax + bs / 2;
     if YUI_HEX then                                                  -- (Hex link mode: a gold and an azure hexagon, a fine gold line when anchored)
         local dx = 4.2 * sc;
-        local c1_, c2_ = on and C.GOLDH or { 0.62, 0.60, 0.70 }, on and C.HEXMP[1] or { 0.62, 0.60, 0.70 };
+        local c1_, c2_ = on and C.GOLDH or { 0.62, 0.60, 0.70 }, on and (YUI_TINT_ON and { 0.96, 0.97, 1.0 } or C.HEXMP[1]) or { 0.62, 0.60, 0.70 };   -- (Void red: red and white)
         if on then DL.L(dl, cxa - dx, cy, cxa + dx, cy, U4(C.GOLDH2[1], C.GOLDH2[2], C.GOLDH2[3], 0.55 * c[4]), 1); end
         for _, q in ipairs({ { -1, c1_ }, { 1, c2_ } }) do
             C.hexdot(dl, cxa + q[1] * dx, cy, 3.3 * sc, U4(0.05, 0.045, 0.07, 0.85 * c[4]));
@@ -7078,7 +8108,7 @@ function ALLY.head_icons(dl, x, cy, sc)                              -- the arro
         DL.CF(dl, cxa + 3.6 * sc, cy, 2.4 * sc, u32(c), 10);
     end
     r.anchor = { ax, cy - bs / 2, bs, bs };
-    local rx = ax - bs - 2 * sc;                                     -- the arrow: > slides them away, < brings them back
+    local rx = pos and pos.rx or (ax - bs - 2 * sc);                 -- the arrow: > slides them away, < brings them back
     local hidden = cfg.party_hidden == true;
     local cc = U4(1, 1, 1, ALLY.hbh.arrow and 1 or 0.75);
     local cxr = rx + bs / 2;
@@ -7086,7 +8116,7 @@ function ALLY.head_icons(dl, x, cy, sc)                              -- the arro
     DL.L(dl, cxr - 2.6 * sc * d, cy - 4.2 * sc, cxr + 2.6 * sc * d, cy, cc, 1.6 * sc);
     DL.L(dl, cxr + 2.6 * sc * d, cy, cxr - 2.6 * sc * d, cy + 4.2 * sc, cc, 1.6 * sc);
     r.arrow = { rx, cy - bs / 2, bs, bs };
-    local kx = rx - bs - 2 * sc;                                     -- the cards: two little cards - every card turned over, or back
+    local kx = pos and pos.kx or (rx - bs - 2 * sc);                 -- the cards: two little cards - every card turned over, or back
     local kon = ALLY.ALLB == true;
     local kc = kon and (YUI_HEX and { C.GOLDH[1], C.GOLDH[2], C.GOLDH[3] } or { 0.86, 0.58, 1.0 }) or { 1, 1, 1 };
     local ka = ALLY.hbh.cards and 1 or (kon and 0.9 or 0.75);
@@ -7118,7 +8148,10 @@ function ALLY.spine(dl, list, x, y, sc, dt, tidx, n, party)
     local now = os.clock();
     local fs = FS or 1;
     local wide = (cfg.card_style or 'clean') == 'clean';             -- (Clean: wider, so the name in capitals has room)
-    local w = (wide and 300 or 230) * sc;
+    local minl_ = 0.6;                                               -- (each turned look's shortest readable length: below it, that length)
+    if YUI_HEX then minl_ = ({ box = 0.9, tab = 0.85, bare = 0.95 })[cfg.turn_look or 'box'] or 0.9; end
+    local cwk = math.max(minl_, math.min(1.6, tonumber(cfg.card_w) or 1));   -- (PARTY > Card length: the TURNED cards only - a card not turned keeps
+    local w = (wide and 300 or 230) * sc * math.max(1, cwk);         --  its own length, or a short turned setting made it unreadable)
     local lx = x + w - 8 * sc;                                       -- the line, at the right
     pcall(function()                                                 -- (where its line rests, for lining the alliances up on it)
         local wx = imgui.GetWindowPos();
@@ -7127,22 +8160,72 @@ function ALLY.spine(dl, list, x, y, sc, dt, tidx, n, party)
     end);
     imgui.SetWindowFontScale((FS or 1) * 0.80);                      -- (a card's height, so the cards never overlap)
     local lh80 = imgui.GetTextLineHeight();
-    local gap = ALLY.ch(lh80, sc, party) + (party and 6 or 4) * sc;   -- (PARTY > CARDS: style, height)
+    local gap = ALLY.ch(lh80, sc, party) + (party and 6 or 4) * sc + (tonumber(cfg.party_vgap) or 0) * sc;   -- (PARTY > CARDS: style, height; Space between members)
+    ALLY.tabroom = 0;
+    ALLY.first_name = party and list[1] and list[1][1] and list[1][1].name or nil;
+    ALLY.afirst = (not party) and list[1] and list[1][1] and list[1][1].name or nil;   -- (an alliance's top card: where its TP starts - the title goes before it)
+    ALLY.akey = tostring(n);   -- (your party's top card: its tab carries the title's icons)
+    local T1 = party and ALLY.tab1 and (now - ALLY.tab1.t) < 0.3 and ALLY.tab1 or nil;
+    do                                                               -- (turned cards, either mode: their name over the top edge - room for it)
+        for _, e_ in ipairs(list) do
+            local m_ = e_[1];
+            local f_ = m_ and ALLY.FL[m_.name or ('m' .. tostring(e_[2]))];
+            if f_ and f_.back and m_.inzone and not (YUI_HEX and cfg.turn_look == 'bare') then ALLY.tabroom = lh80 * 0.5 + 2 * sc; gap = gap + ALLY.tabroom - (party and 4 or 0) * sc; break; end   -- (the tab's height - ALLY.tabgeo; the cards closer: 2 px of air)
+        end
+    end
     if party then ALLY.pgap, ALLY.pn = gap, #list; end               -- (PARTY > Grow upward: how far a full party reaches)
     local brk = (cfg.card_style or 'plate') == 'bracket';          -- (Bracket: the arrow and buffs step left of the [)
     ALLY.tidx_cur = tidx;                                            -- (Bracket: your target's band lights up)
     local lp = brk and 12 * sc or 0;
     imgui.SetWindowFontScale(FS or 1);
     imgui.SetWindowFontScale(fs * 0.66);
-    local lab = (type(n) == 'string') and n or ('ALLIANCE ' .. n);
+    local lab = (type(n) == 'string') and n or ('ALLY ' .. n);
     local lw = imgui.CalcTextSize(lab);
     local labh = imgui.GetTextLineHeight();
+    local aon = (not party) and (ALLY.tabroom or 0) > 0;            -- (an alliance of turned plates: its title on the first plate's top-right, on the
+    local ach = ALLY.ch(lh80, sc, party);                            --  names' row - no row of its own)
+    ALLY.over = ALLY.over or {};                                     -- (how far its last plate reaches past its window's foot: the next list stacks clear of it)
+    ALLY.over[party and 'party' or ((tostring(n) == '1') and 'alliance' or 'ally2')] = math.max(0, ach / 2 - 10 * sc);
     local hy_ = party and 2.5 * sc or 0;                              -- (your party's title and its icons a little higher: clear of the plate under them)
-    text(dl, lx - lw - 8 * sc, y - hy_, lab, { C.muted[1], C.muted[2], C.muted[3], 0.9 });
-    if party then ALLY.head_icons(dl, lx - lw - 14 * sc, y + labh / 2 - hy_, sc); end
+    if T1 then                                                       -- (the top card turned: the cards icon over the plate's left end, the arrow and the
+        local bs_ = 14 * sc;                                         --  anchor over its right end)
+        if T1.tpa and not YUI_HEX then                               -- (Vex: the TP has the right end - the three just before it, on its row)
+            local ax_ = T1.tpa - 4 * sc - bs_;
+            local rx_ = ax_ - bs_ - 1 * sc;
+            local kx_ = rx_ - bs_ * 0.9 - 1 * sc;
+            ALLY.head_icons(dl, 0, y + labh / 2 - hy_, sc, { kx = kx_, rx = rx_, ax = ax_, ay = T1.y1 - (T1.tpt or bs_) / 2 - 1 * sc });
+        elseif T1.tpb then                                           -- (on the TP tab's row, just after it - the top right)
+            local ax_ = T1.tip - bs_;                                -- (close together, the anchor ending at the plate's right end)
+            local rx_ = ax_ - bs_ - 1 * sc;
+            local kx_ = math.max(T1.tpb + 2 * sc, rx_ - bs_ * 0.9);
+            ALLY.head_icons(dl, 0, y + labh / 2 - hy_, sc, { kx = kx_, rx = rx_, ax = ax_, ay = T1.y1 - (YUI_HEX and (bs_ * 0.5) or ((T1.tpt or bs_) / 2 + 4 * sc)) });
+        else
+            ALLY.head_icons(dl, 0, y + labh / 2 - hy_, sc, { rx = T1.tip - 2 * bs_ - 2 * sc, ax = T1.tip - bs_, ay = T1.y1 - bs_ / 2 - 1 * sc });
+        end
+    elseif not aon then
+        text(dl, lx - lw - 8 * sc, y - hy_, lab, { C.muted[1], C.muted[2], C.muted[3], 0.9 });
+        if party then ALLY.head_icons(dl, lx - lw - 14 * sc, y + labh / 2 - hy_, sc); end
+    end
+    local y0 = y + labh + 6 * sc + (ALLY.tabroom or 0);              -- (under its title - and under the name on the first card's edge)
+    ALLY.labgap = nil;
+    if aon then                                                      -- (the title OVER the first plate, at its right end - over its edge, not on it)
+        local top_ = math.max(ALLY.tabroom, labh + 2 * sc);
+        if not YUI_HEX then top_ = ALLY.tabroom + labh + 2 * sc; end   -- (Vex: the name and TP across the top edge - the title over them, room for it)
+        y0 = y + top_ + ach / 2 - 10 * sc;
+        local py1_ = y0 + 10 * sc - ach / 2;                         -- (the first plate's top edge)
+        local K_ = math.min(9 * sc, ach * 0.32);
+        C.fullclip(dl);
+        local tx_ = lx - 4 * sc - lw;                                -- (gold: at the plate's right end)
+        local ty_ = py1_ - labh - 2 * sc;
+        if not YUI_HEX then ty_ = py1_ - ALLY.tabroom - labh - 1 * sc; end   -- (Vex: over the name and TP row, at the right end)
+        for _, d in ipairs({ { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 }, { -1, -1 }, { 1, -1 }, { -1, 1 }, { 1, 1 } }) do DL.T(dl, tx_ + d[1], ty_ + d[2], U4(0, 0, 0, 0.9), lab); end
+        DL.T(dl, tx_, ty_, U4(1, 1, 1, 0.95), lab);
+        dl:PopClipRect();
+    end
     imgui.SetWindowFontScale(fs);
-    local y0 = y + labh + 6 * sc;                                    -- (under its title)
     local y1 = y0 + 10 * sc + (#list - 1) * gap + 10 * sc;
+    ALLY.lbot = ALLY.lbot or {};                                     -- (where its last plate's foot really is, on the screen: the next list stacks under it)
+    ALLY.lbot[party and 'party' or ((tostring(n) == '1') and 'alliance' or 'ally2')] = { y0 + 10 * sc + (#list - 1) * gap + ach / 2, os.clock() };
     local trace = cfg.spine_trace ~= false and not brk and (cfg.card_style or 'clean') ~= 'plate' and (cfg.card_style or 'clean') ~= 'clean';   -- (Spine outline: Slim / Filled)
     local t0 = ALLY.t0[tostring(n)];
     local ts = t0 and (t0 + 0.95 + math.max(0, #list - 1) * 0.22) or -1e9;   -- (when the cards have all come in)
@@ -7196,7 +8279,8 @@ function ALLY.spine(dl, list, x, y, sc, dt, tidx, n, party)
             imgui.SetWindowFontScale(fs * 0.80);
             local lh = imgui.GetTextLineHeight();
             local ch = ALLY.ch(lh, sc, party);                         -- (PARTY > CARDS: style, height)
-            local cw = (wide and 250 or 180) * sc;
+            local f_ = ALLY.fl(m.name or ('m' .. i));
+            local cw = (wide and 250 or 180) * sc * ((f_ and f_.back) and cwk or 1);   -- (Card length: turned cards only)
             local tip = lx - 10 * sc + hk * (SW - x + 60 * sc);      -- (it fades in where it stays; slides off right when hidden)
             local x1 = tip - cw;
             ALLY.card(dl, m, i, x1, tip, ny, ch, lh, sc, v, party, true);   -- (PARTY > CARDS: its shape, colours, effect)
@@ -7221,7 +8305,7 @@ function ALLY.spine(dl, list, x, y, sc, dt, tidx, n, party)
             if tgt then                                              -- selected: the chromatic white arrow, pointing at it, gently swaying
                 local as = ch * (ALLY.hexrows() and 1.0 or 0.72);    -- (Hex link's arrow: a 2:1 picture, longer)
                 local sway = math.sin(os.clock() * 4) * 3 * sc;
-                local ax = x1 - as - 1 * sc + sway - lp;
+                local ax = x1 - as - 1 * sc + sway - lp - ((ALLY.nroom and ALLY.nroom[i]) or 0);
                 if ALLY.hexrows() then pcall(C.prism, dl, x1 - lp - 9 * sc - ((ALLY.nroom and ALLY.nroom[i]) or 0), ny, ch * 0.95, true, v);   -- (Hex link: the gold prism, pointing at the plate)   -- (shorter: 3/4 of its length, same height, tip where it was)   -- (the user's own arrow alone - no chevron, haze or trail: 2:1)   -- (Hex link's plates: its own arrow)
                 else image(dl, tex('sel_arrow.png'), ax, ny - as / 2, ax + as, ny + as / 2, { 1, 1, 1, v }); end
             end
@@ -7237,6 +8321,7 @@ function ALLY.spine(dl, list, x, y, sc, dt, tidx, n, party)
                     pcall(function()
                         local bl_ = member_buffs(i);
                         local per_, rows_, sz_, by_ = ALLY.bwrap(#bl_, bs, ch, ny);   -- (PARTY > Buffs per row)
+                        by_ = by_ + ((ALLY.byoff and ALLY.byoff[i]) or 0);
                         draw_buffs(dl, math.max(lx, tip) + 6 * sc, by_, bl_, sz_, per_, rows_, 1, C.ptimers(i), BUFFS.val(m.name or i));
                     end);
                 else
@@ -7249,7 +8334,8 @@ function ALLY.spine(dl, list, x, y, sc, dt, tidx, n, party)
                             bl_ = r_;
                         end
                         local per_, rows_, sz_, by_ = ALLY.bwrap(#bl_, bs, ch, ny);   -- (PARTY > Buffs per row)
-                        local nr_ = (ALLY.hexrows() and ALLY.nroom and ALLY.nroom[i]) or 0;   -- (a turned Hex plate's name before it)
+                        by_ = by_ + ((ALLY.byoff and ALLY.byoff[i]) or 0);
+                        local nr_ = (ALLY.nroom and ALLY.nroom[i]) or 0;   -- (a turned card: shorter on its left)
                         draw_buffs(dl, x1 - 6 * sc - lp - nr_ - ((tgt and ch * (ALLY.hexrows() and 1.0 or 0.72) + 4 * sc) or 0), by_, bl_, sz_, per_, rows_, -1, C.ptimers(i), BUFFS.val(m.name or i));
                     end);
                 end
@@ -7277,7 +8363,7 @@ function ALLY.spine(dl, list, x, y, sc, dt, tidx, n, party)
         ALLY.bracket(dl, tostring(n), lx - 10 * sc - (wide and 250 or 180) * sc - 6 * sc, y0 + 10 * sc - chb / 2, y0 + 10 * sc + (#list - 1) * gap + chb / 2, sc, ee, now, lx);
     end
     if clipped then pcall(function() dl:PopClipRect(); end); end
-    return y1 - y + 4 * sc, w;
+    return y1 - y + 4 * sc + math.max(0, ach / 2 - 10 * sc + 2 * sc), w;   -- (the whole last card inside the window: its foot - the MP bar - was cut off)
 end
 function ALLY.hex(dl, list, x, y, sc, dt, tidx)
     local Rh = 24 * sc;
@@ -7518,7 +8604,12 @@ local function draw_party(dt)
                     local nx = rx + rs[1] - me[1];
                     local pl, ml = ALLY.lx and ALLY.lx.PARTY, ALLY.lx and ALLY.lx[tostring(n)];
                     if pl and ml then nx = pl[1] - ml[2]; end                -- (its line on the party's line)
-                    cfg[a[2]], cfg[a[3]] = ALLY.inside(nx, up and (ry - me[2] - 6) or (ry + rs[2] + 6), me[1], me[2]);
+                    local ov_ = ALLY.over or {};                              -- (close under / over it - never over its plates)
+                    local mine_ = (n == 1) and 'alliance' or 'ally2';
+                    local lb_ = ALLY.lbot and ALLY.lbot[ref];
+                    local lg_ = tonumber(cfg.ally_gap) or 0;          -- (PARTY > Space between lists)
+                    local dny_ = (lb_ and os.clock() - lb_[2] < 0.5) and (lb_[1] + 4 + lg_) or (ry + rs[2] + (ov_[ref] or 0) + 3 + lg_);   -- (under: clear of its last plate's foot)
+                    cfg[a[2]], cfg[a[3]] = ALLY.inside(nx, up and (ry - me[2] - (ov_[mine_] or 0) - 3 - lg_) or dny_, me[1], me[2]);
                     if not (WATCH.size and WATCH.size[a[2]] and ml) then cfg[a[2]], cfg[a[3]] = -4000, -4000; end   -- (its first frame: measured off screen, so it never jumps)
                 end
             end
@@ -7564,6 +8655,7 @@ local CHAT_COLS = {
     { 'error', 'Errors', { 1, 0.35, 0.65 } },
     { 'combat', 'Combat (combat log)', { 0.80, 0.86, 0.95 } }, { 'roe', 'Records of Eminence', { 0.62, 0.92, 0.78 } },
     { 'addon', 'Addons and plugins ([Name] ...)', { 0.56, 0.84, 0.96 } },
+    { 'finder', 'Party Finder', { 0.80, 0.95, 0.45 } },
     { 'other', 'Everything else', { 0.92, 0.92, 0.94 } },
 };
 local CHAT_DEF = {};
@@ -7595,7 +8687,7 @@ local COMBAT_A = { [162] = true, [163] = true, [164] = true, [165] = true, [166]
     [171] = true, [174] = true, [175] = true, [177] = true, [181] = true, [182] = true, [183] = true, [185] = true, [186] = true,    --  parties of the
     [187] = true, [188] = true, [191] = true };                                                                                       --  alliance's battle lines)
 local function is_combat(m) return (m >= 20 and m <= 120) or m == 122 or m == 129 or m == 131 or COMBAT_A[m] == true; end
-local SJIS = { ['\129\168'] = '>', ['\129\169'] = '<', ['\129\170'] = '^', ['\129\171'] = 'v', ['\129\64'] = ' ',
+local SJIS = { ['\129\168'] = '>', ['\129\169'] = '<', ['\129\170'] = '+', ['\129\171'] = '-', ['\129\64'] = ' ',   -- (the game's up / down arrows: + / - - "Damage Taken-", "Attack+" - never a letter v)
                ['\129\154'] = '*', ['\129\153'] = '-', ['\129\69'] = '-', ['\129\124'] = '-', ['\129\117'] = '"', ['\129\118'] = '"' };
 function C.mob_name(s)                                               -- (a name without the marker symbol it may start with)
     if type(s) ~= 'string' then return s; end
@@ -8033,7 +9125,15 @@ function C.w2s(wx, wy, wz)
     local cw = x * pj._14 + y * pj._24 + z * pj._34 + pj._44;
     if cw < 0.1 then return nil; end
     local ds = imgui.GetIO().DisplaySize;
-    return (cx / cw + 1) * 0.5 * ds.x, (1 - cy / cw) * 0.5 * ds.y;
+    local W, H = ds.x, ds.y;
+    local U = C.UISZ;                                                -- (VanaCore's own interface size, once a second: on some PCs ImGui says 3840 x 2160
+    if not U or os.clock() - U.t > 1 then                            --  while the game and its interface are 2560 x 1440 - every bar over a head landed
+        U = { t = os.clock() };                                      --  half as far again from the screen's corner, off to the right and down)
+        pcall(function() local a_, b_ = vana.ui.screen(); U.w, U.h = tonumber(a_), tonumber(b_); end);
+        C.UISZ = U;
+    end
+    if U.w and U.h and U.w > 200 and U.h > 200 and U.w < W - 1 and U.h < H - 1 then W, H = U.w, U.h; end   -- (only when the interface is the smaller one)
+    return (cx / cw + 1) * 0.5 * W, (1 - cy / cw) * 0.5 * H;
 end
 -- Text broken into rows of at most maxw (at most 3 rows; the last one cut with "...")
 function C.pop_rows(msg, maxw)
@@ -8193,6 +9293,34 @@ function C.tarrow_redo()                                             -- (the arr
     C.TAR_redo = { t + 3, t + 10 };                                  --  picture without showing it - the arrow was missing until toggled)
 end
 C.tarrow_redo();
+-- A huge monster (a dragon): the game puts its arrow far over it, as high as it flies - YunaUI's arrow drawn lower
+-- instead, by its head (the same height as the target bar's, C.thead), the game's hidden while it's targeted
+function C.bigarrow()
+    C.TBIG = nil;
+    if cfg.tarrow == false then return; end
+    local tg = AshitaCore:GetMemoryManager():GetTarget();
+    local idx = tg and tg:GetTargetIndex(0) or 0;
+    if idx == 0 or idx >= 0x400 then return; end                      -- (players and their pets: the game's)
+    local ent = AshitaCore:GetMemoryManager():GetEntity();
+    local t = C.tall(idx, ent);
+    if not t or t <= (C.BIGTEST or 4.5) then return; end
+    local px, py, pz, obj = C.tpos(idx, ent);
+    if px == nil or obj then return; end
+    local cap = 4.5 + (t - 4.5) * 0.35;
+    local sx, sy = C.w2s(px, pz - cap - 0.4, py);
+    if not sx then return; end
+    C.TBIG = idx;
+    local _, H = C.screen();
+    local u = (H or 1080) / 800;                                      -- (the game's interface units, in pixels)
+    local hex = cfg.target_fx == 'link';
+    local w, h = (hex and 23 or 21) * u, (hex and 22 or 14) * u;
+    local fg = imgui.GetForegroundDrawList();
+    if hex and YUI_TINT_ON then                                      -- (Void red: the white arrow, in red - the gold prism is a picture, it can't be turned)
+        image(fg, tex('tarrow_vexw.png'), sx - w / 2, sy - h, sx + w / 2, sy, { 1, 0.32, 0.36, 1 });
+    else
+    image(fg, tex(hex and 'tarrow_prism2.png' or 'tarrow_vexw.png'), sx - w / 2, sy - h, sx + w / 2, sy, { 1, 1, 1, 1 });
+    end
+end
 function C.tarrow_sync()
     if C.TAR_redo and C.TAR_redo[1] and os.clock() >= C.TAR_redo[1] then table.remove(C.TAR_redo, 1); C.TAR_last = nil; end
     local v = rawget(_G, 'vana');
@@ -8203,6 +9331,7 @@ function C.tarrow_sync()
         want = 'prism';                                              --  you target - a monster, a player, you, an NPC or object)
     end
     if want == 'normal' then want = 'vex'; end                       -- (Vex mode: the party cards' triangle, soft pink into your HP pink)
+    if want ~= 'off' and C.TBIG then want = 'none'; end              -- (a huge monster: the game's arrow hidden - YunaUI draws it lower, C.bigarrow)
     -- (picking a target - Switch Target in a fight, <st>, <stal>: YunaUI's marker stays on your target, the game's blue
     --  cursor still shows the one you're picking - it used to hand the arrow back to the game then: the standard one showed)
     local jc = C.myjobcol and C.myjobcol();
@@ -8598,7 +9727,7 @@ function C.mb_pillbar(row, sel, now, op, cds, nm, sc)
         return pts;
     end
     local VIO = hex and GOLD or { 0.62, 0.40, 1.00 };                -- (the gradient's foot: gold in Hex link, violet in Normal mode)
-    local DOT = (cfg.target_fx ~= 'link') and { 0.55, 0.82, 1.00 } or GOLD;   -- (the ready dot: gold in Hex link, Vex mode's lucent blue as its edges)
+    local DOT = (cfg.target_fx ~= 'link') and { 0.55, 0.82, 1.00 } or (YUI_TINT_ON and { 0.96, 0.97, 1.0 } or GOLD);   -- (the ready dot: gold in Hex link - Void red: white - Vex mode's lucent blue as its edges)
     local function mix(c1, c2, u) return { c1[1] + (c2[1] - c1[1]) * u, c1[2] + (c2[2] - c1[2]) * u, c1[3] + (c2[3] - c1[3]) * u }; end
     local WH, DIM = { 1, 1, 1 }, { 0.70, 0.70, 0.74 };
     local function cl01(u) return math.max(0, math.min(1, u)); end
@@ -8645,7 +9774,7 @@ function C.mb_pillbar(row, sel, now, op, cds, nm, sc)
         FIGHT.unfont(k);
     end
     if M.book then                                                   -- (the book and page, over the lines)
-        txt(string.format('BOOK %d  .  PAGE %d', M.book, M.page), 11.5 * s_, x0 + 5 * STEP, top + 10 * s_ - (1 - e) * 6 * s_, hex and GOLD or { 0.92, 0.91, 0.97 }, e, 2 * s_);   -- (Normal mode: a light near-white - readable)
+        txt(string.format('BOOK %d  .  PAGE %d', M.book, M.page), 11.5 * s_, x0 + 5 * STEP, top + 10 * s_ - (1 - e) * 6 * s_, (hex and not YUI_TINT_ON) and GOLD or { 0.92, 0.91, 0.97 }, e, 2 * s_);   -- (Normal mode: a light near-white - readable)
     end
     M.pb, M.pr, M.pgeo = M.pb or {}, M.pr or {}, M.pgeo or {};
     local FS_ = nil;                                                 -- (the skillchain / Magic Burst on your target, for the macros that answer it)
@@ -10489,9 +11618,25 @@ local function chat_add(mode, raw)
                 if not is_combat(mode) then pcall(C.chat_pop, mode, raw_line); end   -- (CHAT > Speech bubbles)
                 local pre = cfg.chat_time and C.ts_text(os.time()) or '';
                 line = pre .. line;
+                local motd_ = false;                                 -- (the message of the day: its linkshell's tab only, not All)
+                do                                                   -- (a linkshell's message of the day, at login: "[1]<Shell: Who>", its text, the date -
+                    local M_ = C.MOTD;                               --  the game prints it outside the linkshell's own mode: it went only to All)
+                    local ls_ = raw_line:match('^%[([12])%]%s*<[^>]*:[^>]*>');
+                    motd_ = false;
+                    if ls_ then
+                        motd_ = true;
+                        C.MOTD = { mode = (ls_ == '1') and 6 or 213, n = 4, t = os.clock() };
+                        mode = C.MOTD.mode;
+                    elseif M_ and M_.n > 0 and os.clock() - M_.t < 3 and not TAB_OF[mode] and not is_combat(mode) then
+                        mode = M_.mode;
+                        motd_ = true;
+                        M_.n = M_.n - 1;
+                        if raw_line:match('%(%d%d%d%d, %a+%.? %d+ %d+:%d+:%d+%)') then M_.n = 0; end   -- (its date: the message ends there)
+                    end
+                end
                 local cat_ = cat_of(mode);                            -- (an addon's own message - "[Name] ..." on a channel nobody talks on: Addons)
-                if cat_ ~= 'combat' and raw_line:match('^%[[%a][%w%s%._:%-]*%]') then cat_ = 'addon'; end   -- (any channel: players' lines never start so - a linkshell's is "[1]<Name>")
-                CHATLOG.add(log_, { text = line, raw = raw_line, cat = cat_, t = os.clock(), t0 = os.clock(), ts = os.time(), mode = mode, tslen = #pre, ctype = ctype });
+                if cat_ ~= 'combat' and raw_line:match('^%[[%a][%w%s%._:%-]*%]') then cat_ = raw_line:match('^%[PartyFinder%]') and 'finder' or 'addon'; end   -- (the server's Party Finder: its own colour - the addons' blue was the party's)   -- (any channel: players' lines never start so - a linkshell's is "[1]<Name>")
+                CHATLOG.add(log_, { text = line, raw = raw_line, cat = cat_, t = os.clock(), t0 = os.clock(), ts = os.time(), mode = mode, tslen = #pre, ctype = ctype, motd = motd_ or nil });
                 if YUI_JP_CFE and is_combat(mode) then pcall(YUI_JP_CFE, log_[#log_]); end   -- [JP]
                 if n_ == 1 then chat_seen_new(mode); end
                 if n_ == 1 and cfg.chat3 and C.c3_has(log_[#log_]) then   -- (a line for the third chat: its ground darkens a moment;
@@ -10507,6 +11652,7 @@ end
 -- Break a line into pieces that fit the width (kept until the width or the text size changes)
 -- How wide a line is, with the auto-translate marks counted as their icons
 local function line_w(s)
+    if JP.chat_line_width and JP.chat_current() then return JP.chat_line_width(s); end   -- [JP]
     local plain = s:gsub('[\1\2]', '');
     local _, n = s:gsub('[\1\2]', '');
     return imgui.CalcTextSize(plain) + n * (imgui.GetTextLineHeight() * 0.42 + 2);
@@ -10538,6 +11684,7 @@ C.HL = { { 'too weak to be worthwhile', { 0.62, 0.62, 0.66 } }, { 'easy prey', {
          { 'very tough', { 1.0, 0.58, 0.25 } }, { 'tough', { 1.0, 0.90, 0.35 } }, { 'impossible to gauge', { 0.85, 0.45, 1.0 } } };
 local function chat_line(dl, x, y, s, c, a, lh)
     local edge = CHAT_EDGE.outline;                                  -- (always: a thin dark line round every letter)
+    if JP.chat_edge then edge = JP.chat_edge(edge); end   -- [JP]
     local OUTLINE = edge[1];
     local oc = U4(0, 0, 0, edge[2] * a);
     local tc = U4(c[1], c[2], c[3], a);
@@ -10571,12 +11718,14 @@ local function chat_line(dl, x, y, s, c, a, lh)
             local q = str:find('[<>]', p_);
             local run = str:sub(p_, (q or (#str + 1)) - 1);
             if run ~= '' then
+                if JP.chat_shadow_pass then JP.chat_shadow_pass(dl, DL.T, cx, y, run, a); end   -- [JP]
                 for _, o in ipairs(OUTLINE) do DL.T(dl, cx + o[1], y + o[2], oc, run); end
                 DL.T(dl, cx, y, tc, run);
                 cx = cx + imgui.CalcTextSize(run);
             end
             if q == nil then break; end
             local ch = str:sub(q, q);
+            if JP.chat_shadow_pass then JP.chat_shadow_pass(dl, DL.T, cx, y + low, ch, a); end   -- [JP]
             for _, o in ipairs(OUTLINE) do DL.T(dl, cx + o[1], y + low + o[2], oc, ch); end
             DL.T(dl, cx, y + low, tc, ch);
             cx = cx + imgui.CalcTextSize(ch);
@@ -10600,7 +11749,7 @@ local function chat_line(dl, x, y, s, c, a, lh)
         local seg = s:sub(i, (j or (n + 1)) - 1);
         if seg ~= '' then put(seg); end
         if j == nil then break; end
-        cx = cx + at_icon(dl, cx, y, lh - 2, s:byte(j) == 1, a);
+        cx = cx + at_icon(dl, cx, y, (JP.chat_icon_height and JP.chat_icon_height(lh)) or (lh - 2), s:byte(j) == 1, a);   -- [JP]
         i = j + 1;
     end
 end
@@ -10613,6 +11762,7 @@ function C.feed_fit(dl, e, maxw, notime)                             -- (does it
     local f = e.feed;
     if f == nil then return; end
     local sig = tostring(maxw) .. ':' .. tostring(#(f.res or {})) .. ':' .. tostring(f.state) .. ':' .. tostring(f.target);
+    sig = sig .. ':' .. tostring(imgui.GetFontSize());   -- [JP]
     if f.fit_sig == sig then return; end
     f.split = nil;
     local w_ = C.feed_draw(dl, 0, 0, e, 1, 0, true, notime, 1) or 0;
@@ -10730,6 +11880,7 @@ end
 -- look: a soft shade behind the lines, the time in brackets at the start of each message)
 function C.clear_on() return cfg.chat_look ~= 'classic'; end
 function C.wrapc(e, maxw, key)                                       -- (classic: the whole line, time and all, wrapped)
+    if JP.chat_wrap and JP.chat_current() then return JP.chat_wrap(e, maxw, key, false); end   -- [JP]
     if e.ww == maxw and e.wk == key and e.lines then return e.lines; end
     local out, cur = {}, '';
     for word in e.text:gmatch('%S+') do
@@ -10759,6 +11910,7 @@ end
 -- The chat's rows (clear look): the message without its time, wrapped narrower (the time and the channel bar sit on its left, so
 -- the rows after the first start under the message, not under the time). Gives the rows and the time ("12:39").
 function C.wrapb(e, maxw, key)
+    if JP.chat_wrap and JP.chat_current() then return JP.chat_wrap(e, maxw, key, true); end   -- [JP]
     if e.btext == e.text and e.bw == maxw and e.bk == key and e.blines then return e.blines, e.bts; end
     local tl = e.tslen or 0;
     local ts = (tl > 0 and #e.text > tl) and e.text:sub(1, tl) or nil;
@@ -11545,6 +12697,8 @@ function C.chat_copy(e, itip)                                        -- (CHAT: a
         DL.T(fg, P.mx + 17, P.my - 20, U4(1, 1, 1, a), JP.t('Copied'));   -- [JP]
     end
 end
+chat_line = YUI_NOTINT(chat_line);                                  -- (the chat's words and feeds: their channels' own colours, whatever the theme)
+C.feed_draw = YUI_NOTINT(C.feed_draw);
 local function draw_chat(n)
     if n == 1 then
         local sig = tostring(cfg.chat_time) .. tostring(cfg.chat_time_sec) .. tostring(cfg.chat_time_12) .. tostring(cfg.chat_time_case);
@@ -11611,6 +12765,14 @@ local function draw_chat(n)
         st.relink = true;
     end
     local w, h = math.max(200, tonumber(cfg[p .. 'w']) or 600), math.max(80, tonumber(cfg[p .. 'h']) or 260);
+    do                                                               -- (never bigger than most of the screen: one as tall as the screen
+        local SW_, SH_ = C.screen();                                 --  was held on it - stuck, and could no longer be moved)
+        if SW_ and SW_ > 200 and SH_ and SH_ > 200 then
+            local mw, mh = math.floor(SW_ * 0.9), math.floor(SH_ * 0.8);
+            if w > mw then w = mw; cfg[p .. 'w'] = mw; end
+            if h > mh then h = mh; cfg[p .. 'h'] = mh; end
+        end
+    end
     local big = (n == 1) and legacy.pad.big;                         -- (the pad's big chat: Triangle, then X)
     if n == 1 then C.bigchat = big; end
     if big then
@@ -11832,10 +12994,10 @@ local function draw_chat(n)
         local hov_e = nil;                                           -- (the line under the mouse: a click copies it)
         -- the text, from the bottom up
         local size = (tonumber(cfg.chat_size) or 16) * YUI_GS();   -- (CHAT > Size, times GENERAL > Size of everything)
-        local pushed = sized('chat', size);
+        local pushed = sized((JP.chat_kind and JP.chat_kind()) or 'chat', (JP.chat_size and JP.chat_size(size)) or size);   -- [JP]
         local lh = imgui.GetTextLineHeight() + math.max(0, math.min(16, tonumber(cfg.chat_gap) or 6));   -- CHAT > Line spacing
         local pad = 12;
-        local bar = math.floor(size * 1.5 + 6);                       -- room for the tabs (the combat window's label)
+        local bar = math.floor(((JP.chat_size and JP.chat_size(size)) or size) * 1.5 + 6);   -- [JP]                       -- room for the tabs (the combat window's label)
         local maxw = w - pad * 2;
         C.iclip({ x, y }, { x + w, y + h }, true);
         local tk = 1 - (1 - math.max(0, math.min(1, st.hv))) ^ 3;
@@ -11880,6 +13042,7 @@ local function draw_chat(n)
         while i >= 1 and ly > y - lh do
             local e = log[i];
             if tab ~= 1 and TAB_OF[e.mode or 0] ~= tab then i = i - 1; goto next_line; end
+            if tab == 1 and e.motd then i = i - 1; goto next_line; end   -- (a linkshell's message of the day: in its own tab, not All)
             if tab == 1 and e.mode == C.ROE_MODE and not cfg.chat_roe_all then i = i - 1; goto next_line; end   -- (RoE: only in its own tab - unless CHAT > Records of Eminence in All)
             if only and ((only == 'combat') ~= is_combat(e.mode or 0)) then i = i - 1; goto next_line; end
             if n == 3 then                                           -- (CHAT > Third chat: only the channels picked for it...)
@@ -11934,7 +13097,7 @@ local function draw_chat(n)
                                 local li_ = C.ls_info((e.cat == 'ls') and 1 or 2);
                                 if li_ and li_.col then bc = li_.col; end
                             end
-                            DL.RF(dl, px, ly - ((k < #lines) and 0 or 0), px + 3, ly + ((k < #lines) and lh or th0), U4(bc[1], bc[2], bc[3], 0.95 * a), 1.5);
+                            DL.RF(dl, px, ly - ((k < #lines) and 0 or 0), px + 3, ly + ((k < #lines) and lh or th0), YUI_U4K(bc[1], bc[2], bc[3], 0.95 * a), 1.5);
                             if k == 1 and bts then
                                 local fs = FS;
                                 imgui.SetWindowFontScale(fs * CL.tsk);
@@ -11950,11 +13113,11 @@ local function draw_chat(n)
                             if a > 0.3 and mx_ >= x and mx_ <= x + w and my_ >= ly - 1 and my_ < ly + lh - 1 then hov_e = e; end
                         end
                         if glow > 0.01 then                          -- (new, or a feed line that just grew: a soft glow in its colour)
-                            DL.RF(dl, px - 5, ly - 2, px + tw_ + 5, ly + th + 1, U4(c[1], c[2], c[3], 0.22 * glow * glow * a), 4);
+                            DL.RF(dl, px - 5, ly - 2, px + tw_ + 5, ly + th + 1, YUI_U4K(c[1], c[2], c[3], 0.22 * glow * glow * a), 4);
                         end
                         local fresh = (cfg.chat_anim ~= false) and math.max(0, math.min(1, 1 - ((now - (e.flash or e.t0 or -99)) - 1.5) / 1.5)) or 0;
                         if fresh > 0.01 and not cl_ then             -- (the clear look has its bar all the time)                         -- (new, or a feed line that just grew: a short bar in its colour on the
-                            DL.RF(dl, px - 10, ly, px - 7, ly + th - 1, U4(c[1], c[2], c[3], 0.9 * fresh * a), 1.5);   --  left, for a moment)
+                            DL.RF(dl, px - 10, ly, px - 7, ly + th - 1, YUI_U4K(c[1], c[2], c[3], 0.9 * fresh * a), 1.5);   --  left, for a moment)
                         end
                         local ts = (not cl_ and not e.feed and k == 1 and (e.tslen or 0) > 0 and #txt > e.tslen) and txt:sub(1, e.tslen) or nil;
                         if e.feed then
@@ -12115,7 +13278,7 @@ local function draw_chat(n)
             if YUI_HEX then                                          -- (Hex link mode: two small hexagons, gold and azure, a dark rim each,
                 local a_ = c[4];                                     --  apart - a fine gold line joins them when anchored)
                 local hx_, hy_ = vx * 1.15, vy * 1.15;
-                local c1_, c2_ = on and C.GOLDH or { 0.62, 0.60, 0.70 }, on and C.HEXMP[1] or { 0.62, 0.60, 0.70 };
+                local c1_, c2_ = on and C.GOLDH or { 0.62, 0.60, 0.70 }, on and (YUI_TINT_ON and { 0.96, 0.97, 1.0 } or C.HEXMP[1]) or { 0.62, 0.60, 0.70 };   -- (Void red: red and white)
                 if on then DL.L(dl, cx - hx_, cy - hy_, cx + hx_, cy + hy_, U4(C.GOLDH2[1], C.GOLDH2[2], C.GOLDH2[3], 0.55 * a_), 1); end
                 for _, q in ipairs({ { -1, c1_ }, { 1, c2_ } }) do
                     local px_, py_ = cx + q[1] * hx_, cy + q[1] * hy_;
@@ -12151,6 +13314,11 @@ local function draw_chat(n)
                 local dx, dy = imgui.GetMouseDragDelta(0);
                 if dx ~= 0 or dy ~= 0 then
                     local nw, nh = math.max(200, gl and (w - dx) or (w + dx)), math.max(80, h - dy);
+                    do                                               -- (the top stops at the screen's top, the side at its edge - the bottom
+                        local SW_, SH_ = C.screen();                 --  stays where it is; no bigger than most of the screen)
+                        nh = math.min(nh, math.max(80, y + h), math.floor((SH_ or 1080) * 0.8));
+                        nw = math.min(nw, math.max(200, gl and (x + w) or ((SW_ or 1920) - x)), math.floor((SW_ or 1920) * 0.9));
+                    end
                     cfg[p .. 'w'], cfg[p .. 'h'] = nw, nh;
                     imgui.SetWindowPos({ gl and (x + (w - nw)) or x, y + (h - nh) });   -- (the grip on the left: the right edge stays)
                     if cfg.chat_link and cfg.chat_split and n == 2 then -- (anchored: resizing the combat log resizes the chat too, its bottom kept)
@@ -12202,6 +13370,17 @@ local function outlined(dl, tx, ty, s, col)
     DL.T(dl, tx, ty, u32(col), s);
 end
 C.outlined = outlined;                                               -- (for the monster info tag, above)
+C.HALO = {};                                                         -- (a soft dark haze round words with no plate: readable on bright sky and snow)
+for k = 0, 11 do local a = k * math.pi / 6; C.HALO[#C.HALO + 1] = { math.cos(a), math.sin(a) }; end
+function C.halo(dl, tx, ty, s, col)
+    local al = col[4] or 1;
+    local c1, c2 = U4(0, 0, 0, 0.16 * al), U4(0, 0, 0, 0.26 * al);
+    for _, o in ipairs(C.HALO) do
+        DL.T(dl, tx + o[1] * 4, ty + o[2] * 3.5, c1, s);
+        DL.T(dl, tx + o[1] * 2.5, ty + o[2] * 2.2, c2, s);
+    end
+    outlined(dl, tx, ty, s, col);
+end
 -- the first time, each one is placed near the bottom middle of the screen (then they go wherever you drag them)
 local function first_place(kx, ky, dx, dy)
     if (tonumber(cfg[kx]) or -1) >= 0 then return; end
@@ -12448,9 +13627,9 @@ local function draw_gil()
         local lh = imgui.GetTextLineHeight();
         local cr = 7 * sc;
         local ccx, ccy = x + cr, y + lh / 2;
-        DL.CF(dl, ccx, ccy, cr + 2, U4(0.95, 0.76, 0.34, 0.18), 20);
-        DL.CF(dl, ccx, ccy, cr, U4(0.86, 0.66, 0.24, 1), 20);
-        DL.CF(dl, ccx, ccy, cr * 0.68, U4(1, 0.88, 0.50, 1), 20);
+        DL.CF(dl, ccx, ccy, cr + 2, YUI_U4K(0.95, 0.76, 0.34, 0.18), 20);
+        DL.CF(dl, ccx, ccy, cr, YUI_U4K(0.86, 0.66, 0.24, 1), 20);
+        DL.CF(dl, ccx, ccy, cr * 0.68, YUI_U4K(1, 0.88, 0.50, 1), 20);
         DL.C(dl, ccx, ccy, cr, U4(0, 0, 0, 0.7), 20, 1);
         local gs = commas(gil);
         outlined(dl, x + cr * 2 + 6 * sc, y, gs, { GOLD[1], GOLD[2], GOLD[3], 1 });
@@ -13231,7 +14410,7 @@ local function draw_strip()
             local cxa, cya = ax_ + bs_ / 2, ay_ + bs_ / 2;
             if YUI_HEX then                                          -- (Hex link: a gold and an azure hexagon, a fine gold line when anchored - as the party's)
                 local dx = 4.2 * ak;
-                local c1_, c2_ = on_ and C.GOLDH or { 0.62, 0.60, 0.70 }, on_ and C.HEXMP[1] or { 0.62, 0.60, 0.70 };
+                local c1_, c2_ = on_ and C.GOLDH or { 0.62, 0.60, 0.70 }, on_ and YUI_AZ() or { 0.62, 0.60, 0.70 };   -- (Void red: red and white)
                 if on_ then DL.L(dl, cxa - dx, cya, cxa + dx, cya, U4(C.GOLDH2[1], C.GOLDH2[2], C.GOLDH2[3], 0.55 * c_[4]), 1.2); end
                 for _, q in ipairs({ { -1, c1_ }, { 1, c2_ } }) do
                     C.hexdot(dl, cxa + q[1] * dx, cya, 3.3 * ak, U4(0.05, 0.045, 0.07, 0.85 * c_[4]));
@@ -13317,7 +14496,7 @@ local function draw_strip()
                     local o_ = math.max(1, math.floor(1.5 * sc + 0.5));
                     local x0_, y0_, x1_, y1_ = math.floor(sx) - o_, math.floor(sy) - o_, math.floor(sx + S) + o_, math.floor(sy + S) + o_;
                     local lit_, mid_, dk_ = U4(1.00, 0.95, 0.72, 0.95 * ga), U4(0.92, 0.72, 0.30, 0.95 * ga), U4(0.55, 0.38, 0.10, 0.95 * ga);
-                    if cfg.target_fx ~= 'link' then                  -- (Vex: softer - a fine rounded white line with a faint glow, no bevel)
+                    if cfg.target_fx ~= 'link' or YUI_TINT_ON then   -- (Vex - and Void red: softer, a fine rounded white line with a faint glow, no bevel)
                         local rr_ = math.max(3, 5 * sc);
                         for g = 3, 1, -1 do DL.R(dl, sx - g, sy - g, sx + S + g, sy + S + g, U4(1, 1, 1, 0.12 * ga), rr_ + g, allc, 2); end
                         DL.R(dl, sx, sy, sx + S, sy + S, U4(1, 1, 1, 1.0 * ga), rr_, allc, math.max(1.5, 1.6 * sc));
@@ -13700,32 +14879,57 @@ end
 function TIMERS.colour(kind)
     if kind == 'sp' then return (type(cfg.timers_csp) == 'table') and cfg.timers_csp or { 1.00, 0.45, 0.75 }; end
     if kind == 'ma' then return (type(cfg.timers_cma) == 'table') and cfg.timers_cma or { 0.55, 0.80, 1.00 }; end
+    if kind == 'mob' then return (type(cfg.timers_cmob) == 'table') and cfg.timers_cmob or { 1.00, 0.45, 0.45 }; end   -- (a debuff on your target: red, or yours)
     return (type(cfg.timers_cja) == 'table') and cfg.timers_cja or { 1.00, 0.85, 0.45 };
 end
-function TIMERS.draw()
+function TIMERS.drawmob() return TIMERS.draw(true); end
+function TIMERS.draw(mobwin)
     if not cfg.timers then return; end
+    local sep = cfg.timers_mob == true and cfg.timers_mob_sep == true;   -- (TIMERS > In their own window: the debuffs moved out, placed anywhere)
+    if mobwin and not sep then return; end
     local pl = AshitaCore:GetMemoryManager():GetPlayer();
     if pl == nil or (pl:GetMainJob() or 0) == 0 then return; end
     local now = os.clock();
     if now >= TIMERS.at then TIMERS.at = now + 0.25; pcall(TIMERS.scan); end
     local list = {};
-    if TIMERS.preview then                                           -- the TIMERS tab is open: pretend ones
+    if TIMERS.preview and mobwin then                                -- (the TIMERS tab open: a pretend debuff, to place the window)
+        list[#list + 1] = { 'Dia II', (55 - (now % 50)) * 60, 120 * 60, 'mob', nil, 'Target' };
+    elseif TIMERS.preview then                                       -- the TIMERS tab is open: pretend ones
         for k, f in ipairs(TIMERS.FAKE) do
             local secs = f[2] * (0.9 - ((now * (f[2] > 600 and 20 or 1) / f[2] + k * 0.17) % 0.85));
             list[#list + 1] = { f[1], math.max(1, secs) * 60, f[2] * 60, f[3] };
         end
     else
         local gone = (now - TIMERS.snap) * 60;                      -- smooth between the looks
-        for _, src in ipairs({ TIMERS.abils, TIMERS.spells }) do
+        for _, src in ipairs(mobwin and {} or { TIMERS.abils, TIMERS.spells }) do
             for _, e in pairs(src) do
                 local left = e.left - gone;
                 if left > 0 then list[#list + 1] = { e.name, left, e.full, e.kind }; end
             end
         end
+        if cfg.timers_mob == true and (mobwin or not sep) then       -- TIMERS > Debuffs on your target: how long each lasts on it
+            pcall(function()
+                local idx = target_index();
+                if not idx or idx == 0 or idx >= 0x400 then return; end
+                local sid = AshitaCore:GetMemoryManager():GetEntity():GetServerId(idx);
+                local mn_ = C.mob_name(AshitaCore:GetMemoryManager():GetEntity():GetName(idx)) or '';
+                for st, exp in pairs(enemies[sid] or {}) do
+                    local left = exp - now;
+                    if left > 0 and C.EMINE and C.EMINE[tostring(sid) .. ':' .. tostring(st)] then   -- (only the ones YOU put on it - not its own buffs, not others')
+                        local full = (C.EFULL and C.EFULL[tostring(sid) .. ':' .. tostring(st)]) or left;
+                        local bn_ = (C.ESRC and C.ESRC[tostring(sid) .. ':' .. tostring(st)]) or buff_name(st);   -- (the spell's name when known: Gravity, Blind)
+                        bn_ = (bn_:sub(1, 1):upper()) .. bn_:sub(2);
+                        list[#list + 1] = { bn_, left * 60, math.max(left, full) * 60, 'mob', nil, mn_ };   -- (e[6]: the monster it's on)
+                    end
+                end
+            end);
+        end
     end
-    for name, r in pairs(TIMERS.ready) do
-        if cfg.timers_flash ~= false and now - r[1] < 2 then list[#list + 1] = { name, 0, 1, r[2], now - r[1] };
-        else TIMERS.ready[name] = nil; end
+    if not mobwin then
+        for name, r in pairs(TIMERS.ready) do
+            if cfg.timers_flash ~= false and now - r[1] < 2 then list[#list + 1] = { name, 0, 1, r[2], now - r[1] };
+            else TIMERS.ready[name] = nil; end
+        end
     end
     if #list == 0 then return; end
     table.sort(list, function(a, b) if a[2] ~= b[2] then return a[2] < b[2]; end return a[1] < b[1]; end);
@@ -13733,12 +14937,22 @@ function TIMERS.draw()
     local sc = (tonumber(cfg.scale) or 1) * (tonumber(cfg.timers_scale) or 1);
     local w = (tonumber(cfg.timers_w) or 260) * sc;
     local bh = math.max(2, math.floor((tonumber(cfg.timers_h) or 4) * sc));
-    first_place('timer_x', 'timer_y', -w / 2 - 420, -420);
-    if plain_window('YunaUI Timers##yui_timers', 'timer_x', 'timer_y') then
+    local tk_ = math.max(0.6, math.min(2.0, tonumber(cfg.timers_text) or 1));   -- (the words' size)
+    if mobwin then                                                   -- (the debuff window: its own size, length, thickness and text)
+        sc = (tonumber(cfg.scale) or 1) * math.max(0.6, math.min(2.0, tonumber(cfg.timers_mob_scale) or tonumber(cfg.timers_scale) or 1));
+        w = (tonumber(cfg.timers_mob_w) or ((tonumber(cfg.timers_w) or 260) * 1.35)) * sc;
+        bh = math.max(2, math.floor((tonumber(cfg.timers_mob_h) or tonumber(cfg.timers_h) or 4) * sc));
+        tk_ = math.max(0.6, math.min(2.0, tonumber(cfg.timers_mob_text) or tonumber(cfg.timers_text) or 1));
+    end
+    local kx_, ky_ = mobwin and 'mobt_x' or 'timer_x', mobwin and 'mobt_y' or 'timer_y';
+    if mobwin and not cfg.timers_mob_w then w = w * math.max(1, tk_); end   -- (wider with bigger text, unless you set its length)
+    if mobwin then first_place(kx_, ky_, -w / 2 - 420 + w + 30, -420);
+    else first_place('timer_x', 'timer_y', -w / 2 - 420, -420); end
+    if plain_window(mobwin and 'YunaUI Debuff timers##yui_mobt' or 'YunaUI Timers##yui_timers', kx_, ky_) then
         local dl = imgui.GetWindowDrawList();
         local x, y = imgui.GetCursorScreenPos();
         x, y = x + 8, y + 6;
-        local pushed = sized('chat', 15 * sc);
+        local pushed = sized('chat', 15 * sc * tk_);                -- (TIMERS > Text size: the words alone)
         local lh = imgui.GetTextLineHeight();
         local rowh = lh + 3 * sc + bh + 6 * sc;
         local n = math.min(#list, maxn);
@@ -13759,7 +14973,31 @@ function TIMERS.draw()
                 outlined(dl, x + w - imgui.CalcTextSize(rs), ry, rs, { c[1], c[2], c[3], a });
                 DL.RF(dl, x, by, x + w, by + bh, U4(c[1], c[2], c[3], a * pulse), bh / 2);
             else
-                outlined(dl, x, ry, e[1], { tc[1], tc[2], tc[3], 1 });
+                local nm_ = e[1];                                    -- (a long name cut short before its time - never over it)
+                local room_ = w - imgui.CalcTextSize(TIMERS.clock(e[2])) - 8 * sc - ((e[6] and e[6] ~= '') and (imgui.CalcTextSize('Abc.') + 14 * sc) or 0);   -- (the spell's name first: the monster's gets what's left)
+                if imgui.CalcTextSize(nm_) > room_ then
+                    while #nm_ > 2 and imgui.CalcTextSize(nm_ .. '.') > room_ do nm_ = nm_:sub(1, -2); end
+                    nm_ = nm_ .. '.';
+                end
+                outlined(dl, x, ry, nm_, { tc[1], tc[2], tc[3], 1 });
+                if e[6] and e[6] ~= '' then                          -- (a debuff on your target: an arrow, then the monster it's on)
+                    local ax_ = x + imgui.CalcTextSize(nm_) + 6 * sc;
+                    local ay_ = ry + lh * 0.55;
+                    local tw_, th_ = 5 * sc, 3.5 * sc;                    -- (a small white triangle, a light black edge - no shaft)
+                    local P1, P2, P3 = { ax_ + tw_, ay_ }, { ax_, ay_ - th_ }, { ax_, ay_ + th_ };
+                    DL.TF(dl, P1[1] + 1, P1[2], P2[1] - 0.7, P2[2] - 1, P3[1] - 0.7, P3[2] + 1, U4(0, 0, 0, 0.7));
+                    local ac_ = (type(cfg.timers_carrow) == 'table') and cfg.timers_carrow or { 1, 1, 1 };
+                    DL.TF(dl, P1[1], P1[2], P2[1], P2[2], P3[1], P3[2], U4(ac_[1], ac_[2], ac_[3], 0.95));
+                    local mx0_ = ax_ + tw_ + 6 * sc;
+                    local room_ = (x + w - imgui.CalcTextSize(TIMERS.clock(e[2])) - 8 * sc) - mx0_;
+                    local mn_ = e[6];
+                    if imgui.CalcTextSize(mn_) > room_ then
+                        while #mn_ > 2 and imgui.CalcTextSize(mn_ .. '.') > room_ do mn_ = mn_:sub(1, -2); end
+                        mn_ = mn_ .. '.';
+                    end
+                    local mc_ = (type(cfg.timers_cmn) == 'table') and cfg.timers_cmn or { 0.92, 0.88, 0.96 };
+                    outlined(dl, mx0_, ry, mn_, { mc_[1], mc_[2], mc_[3], 1 });
+                end
                 local ts = TIMERS.clock(e[2]);
                 local soon = e[2] < 600 and (0.75 + 0.25 * math.sin(now * 8)) or 1;   -- the last 10 s blink softly
                 outlined(dl, x + w - imgui.CalcTextSize(ts), ry, ts, { c[1], c[2], c[3], soon });
@@ -13769,7 +15007,7 @@ function TIMERS.draw()
         end
         unsized(pushed);
         imgui.Dummy({ w + 16, (cfg.timers_up and maxn or n) * rowh + 10 });
-        end_plain('timer_x', 'timer_y');
+        end_plain(kx_, ky_);
     else
         imgui.End(); imgui.PopStyleVar(2);
     end
@@ -14174,7 +15412,53 @@ function C.loot_name(id)
 end
 JP.loot(C);   -- [JP]
 -- Your Lot / Pass, to the game
-function C.loot_act(slot, lot) C.loot_send(lot and 0x41 or 0x42, slot); end
+-- Before a lot / pass reaches the server (the GMs asked, 2026-11-08: log spam): never while you're dead, and never a lot
+-- on a Rare item you already have (in any bag, wardrobe or Mog House storage) - the server would refuse it anyway.
+C.LOOT.warned = {};
+function C.loot_dead()
+    local dead = false;
+    pcall(function()
+        local mm = AshitaCore:GetMemoryManager();
+        if (mm:GetParty():GetMemberHP(0) or 1) == 0 then dead = true; end
+        local me = mm:GetParty():GetMemberTargetIndex(0) or 0;
+        if me ~= 0 then local st = mm:GetEntity():GetStatus(me) or 0; if st == 2 or st == 3 then dead = true; end end
+    end);
+    return dead;
+end
+function C.loot_have_rare(id)                                         -- (a Rare item, and one already yours: true)
+    local rare = false;
+    pcall(function()
+        local r = AshitaCore:GetResourceManager():GetItemById(id);
+        rare = r ~= nil and bit.band(tonumber(r.Flags) or 0, 0x8000) ~= 0;
+    end);
+    if not rare then return false; end
+    local have = false;
+    pcall(function()
+        local inv = AshitaCore:GetMemoryManager():GetInventory();
+        for c = 0, 16 do
+            local max = 80;
+            pcall(function() max = inv:GetContainerCountMax(c) or 80; end);
+            for i = 0, max do
+                local it = inv:GetContainerItem(c, i);
+                if it and tonumber(it.Id) == id then have = true; return; end
+            end
+        end
+    end);
+    return have;
+end
+function C.loot_ok(slot, lot)                                         -- (may this lot / pass go to the server? else a short note, once per item)
+    local L = C.LOOT;
+    pcall(C.loot_read);                                              -- (the pool read again this moment: an item that came and went at once - a fast
+    local it = L.pool and L.pool[slot];                              --  cleave - is never lotted after it left)
+    if not it then return false; end
+    if it.mine ~= nil then return false; end                         -- (already lotted or passed: never twice)
+    local key = (it and it.key or tostring(slot)) .. (lot and ':l' or ':p');
+    local function note(s) if L.warned[key] == nil then L.warned[key] = true; msg(s); end end
+    if C.loot_dead() then note("You can't lot or pass while you're knocked out."); return false; end
+    if lot and it and C.loot_have_rare(it.id) then note("Not lotted: " .. C.loot_name(it.id) .. " is Rare and you already have one."); return false; end
+    return true;
+end
+function C.loot_act(slot, lot) if C.loot_ok(slot, lot) then C.loot_send(lot and 0x41 or 0x42, slot); end end
 -- TREASURE POOL: your alts' LOT ALL / PASS ALL on your main's pool - the other games on this PC (vana.clients) whose
 -- character is in your party or alliance; a click tells that game's YunaUI (vana.ipc), which lots / passes its own pool
 C.ALTS = { at = -9, list = {} };
@@ -14587,8 +15871,9 @@ function C.loot_btn(dl, id, x, y, w, h, label, kind, on, lit)
     local s = h * 0.30;
     local up = hov and 1.5 * C.ps or 0;
     local f = pink and (YUI_HEX and { 0.97, 0.76, 0.30 } or { 0.90, 0.89, 0.93 }) or { 0.40, 0.38, 0.54 };   -- (LOT: gold in Hex link - Normal mode: white)
+    if pink and YUI_TINT_ON then f = { 0.93, 0.93, 0.96 }; end       -- (Void red: LOT white, as Normal mode's)
     if hov then f = { math.min(1, f[1] + 0.06), math.min(1, f[2] + 0.10), math.min(1, f[3] + 0.08) }; end
-    local ink = pink and (YUI_HEX and { 0.28, 0.16, 0.02 } or { 0.08, 0.06, 0.10 }) or { 0.96, 0.95, 1.0 };   -- (Normal mode's white LOT: black letters)
+    local ink = pink and ((YUI_HEX and not YUI_TINT_ON) and { 0.28, 0.16, 0.02 } or { 0.08, 0.06, 0.10 }) or { 0.96, 0.95, 1.0 };   -- (Normal mode's white LOT: black letters)
     local a = on and 1 or 0.45;
     if YUI_HEX then
         local pts = { { x + s, y - up }, { x + w, y - up }, { x + w - s, y + h - up }, { x, y + h - up } };
@@ -14646,8 +15931,8 @@ function C.chest_draw(n, fake)                                       -- (the che
     local jy = -math.abs(math.sin((now - K.shake) * 14)) * 6 * sh * (tonumber(cfg.scale) or 1);
     local rot = 0;                                                   -- (shut with loot in it: every 2.4 s a quick wiggle - a tilt side to side, dying away)
     if not K.open and e >= 1 and (n or 0) > 0 then
-        local ph = (now - (K.wig0 or 0)) % 2.4;
-        if ph < 0.55 then rot = math.sin(ph * 34) * 0.20 * (1 - ph / 0.55); end
+        local ph = (now - (K.wig0 or 0)) % 3.0;
+        if ph < 0.85 then rot = math.sin(ph * 20) * 0.20 * (1 - ph / 0.85); end   -- (a slower sway)
     end
     rot = rot + math.sin((now - K.shake) * 40) * 0.25 * sh;          -- (an item landing in it: a stronger rattle)
     if op > 0.2 then                                                 -- (open: sparks rising out of it)
@@ -14660,7 +15945,7 @@ function C.chest_draw(n, fake)                                       -- (the che
     end
     local h2 = sz * k / 2;
     local x1, y1 = cx - h2 + jx, cy - h2 + jy;
-    local tx_ = C.tex_at(hx and 'panel/chest_hex.png' or 'panel/chest_vex.png', math.floor(sz * 1.3));   -- (one picture: open, it glows brighter)
+    local tx_ = C.tex_at(hx and (YUI_TINT_ON and 'panel/chest_void.png' or 'panel/chest_hex.png') or 'panel/chest_vex.png', math.floor(sz * 1.3));   -- (Void red: the red one)   -- (one picture: open, it glows brighter)
     local function pic(al)                                           -- (the picture, turned round its foot by rot)
         if not tx_ then return; end
         local qx, qy = x1 + h2, y1 + h2 * 2;
@@ -14831,12 +16116,15 @@ function C.loot_win()
         imgui.SetCursorScreenPos({ bx, by });
         local clk = imgui.InvisibleButton('##yui_lootmin', { bs, bs });
         local ov = imgui.IsItemHovered();
+        DL.CF(dl, bx + bs / 2, by + bs / 2, bs / 2 + 1.5, U4(0, 0, 0, 0.75), 20);   -- (dark under it and a black edge: it reads on snow too)
         DL.CF(dl, bx + bs / 2, by + bs / 2, bs / 2, U4(1, 1, 1, ov and 0.20 or 0.10), 20);
-        DL.C(dl, bx + bs / 2, by + bs / 2, bs / 2, U4(A_[1], A_[2], A_[3], ov and 0.9 or 0.5), 20, 1.2);
+        DL.C(dl, bx + bs / 2, by + bs / 2, bs / 2, U4(A_[1], A_[2], A_[3], ov and 1 or 0.85), 20, 1.4);
+        DL.C(dl, bx + bs / 2, by + bs / 2, bs / 2 + 1.5, U4(0, 0, 0, 0.9), 20, 1.2);
         do
             local mcx, mcy = bx + bs / 2, by + bs / 2;
             local lw, lt = math.floor(bs * 0.22), math.max(1, math.floor(1.6 * sc + 0.5));
-            DL.RF(dl, mcx - lw, mcy - lt / 2, mcx + lw, mcy + lt / 2, U4(1, 1, 1, ov and 1 or 0.85), lt / 2);
+            DL.RF(dl, mcx - lw - 1, mcy - lt / 2 - 1, mcx + lw + 1, mcy + lt / 2 + 1, U4(0, 0, 0, 0.85), lt / 2 + 1);   -- (the line's black edge)
+            DL.RF(dl, mcx - lw, mcy - lt / 2, mcx + lw, mcy + lt / 2, U4(1, 1, 1, 1), lt / 2);
         end
         if clk and not pv then K.open, K.t = false, now; end
         DL.L(dl, x, y + hh - 3 * sc, x + W, y + hh - 3 * sc, U4(1, 1, 1, 0.08), 1);
@@ -15071,6 +16359,27 @@ function C.inv_packet(e)                                             -- (0x0DC: 
     if cfg.invite_snd ~= false then pcall(C.snd_play, 'invite', 'invite_vol'); end   -- (SOUND ALERTS > Party invite)
     pcall(C.inv_flash);
 end
+function C.trade_packet(e)                                           -- (0x021: someone wants to trade with you - their id, then their index)
+    local idx = struct.unpack('H', e.data, 0x08 + 1);
+    C.TRD = { idx = idx, t = os.clock() };
+    if cfg.trade_alert == false then return; end
+    local name = '';
+    pcall(function() name = AshitaCore:GetMemoryManager():GetEntity():GetName(idx) or ''; end);
+    if name == '' then name = 'Someone'; end
+    local G = C.GOT;
+    for i = #G.list, 1, -1 do if G.list[i].trade then table.remove(G.list, i); end end   -- (a new request replaces an old one)
+    table.insert(G.list, 1, { trade = true, label = 'TRADE', text = name .. '   wants to trade with you', t0 = os.clock(), life = 60 });
+    pcall(C.inv_flash);
+end
+function C.trade_answer(yes)                                         -- (the trade card's Accept / Decline: the game's own accept / cancel of a request)
+    pcall(function() AshitaCore:GetPacketManager():AddOutgoingPacket(0x33, { 0x33, 0x06, 0x00, 0x00, yes and 0x00 or 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }); end);
+    pcall(C.trade_close);
+end
+function C.trade_close()                                             -- (0x022: the trade opened, ended or was cancelled - its card goes)
+    C.TRD = nil;
+    local G = C.GOT;
+    for _, it in ipairs(G.list) do if it.trade and os.clock() - it.t0 < (it.life or 60) then it.life = os.clock() - it.t0; end end
+end
 function C.inv_close()                                               -- (you joined, or the invite's gone: its card goes)
     local G = C.GOT;
     for _, it in ipairs(G.list) do if it.inv and os.clock() - it.t0 < (it.life or 12) then it.life = os.clock() - it.t0; end end
@@ -15167,7 +16476,8 @@ function C.got_win()                                                 -- (the loo
             local wx_ = d1 + dv;
             local d2 = wx_ + ww_ + dv;
             local nx = d2 + dv;
-            local bw = (nx + nw + pad) - x0;
+            local btw_ = math.floor(84 * sc);                        -- (the trade card: ACCEPT and DECLINE after the name)
+            local bw = (nx + nw + pad) - x0 + (it.trade and (2 * btw_ + 22 * sc) or 0);
             maxw = math.max(maxw, bw);
             local fl = it.fake and 0 or math.max(0, 1 - age / 0.8);  -- (just in: a little brighter)
             C.band(dl, x0, ry, x0 + bw, ry + rh, (0.55 + 0.15 * fl) * al, 0.55 * al);   -- the band: soft all round, a slim dark outline
@@ -15186,7 +16496,8 @@ function C.got_win()                                                 -- (the loo
                 for i = 1, #lab do
                     local ch = lab:sub(i, i);
                     DL.T(dl, px, math.floor(cy - wlh / 2) + 1, U4(0, 0, 0, 0.7 * al), ch);
-                    DL.T(dl, px, math.floor(cy - wlh / 2), U4(AC[1], AC[2], AC[3], al), ch);
+                    if YUI_TINT_ON then DL.T(dl, px, math.floor(cy - wlh / 2), U4(0.96, 0.97, 1.0, al), ch);   -- (Void red: WON white)
+                    else DL.T(dl, px, math.floor(cy - wlh / 2), U4(AC[1], AC[2], AC[3], al), ch); end
                     px = px + (tonumber((imgui.CalcTextSize(ch))) or 0) + 2 * sc;
                 end
                 unsized(pw);
@@ -15198,6 +16509,25 @@ function C.got_win()                                                 -- (the loo
                 DL.T(dl, math.floor(nx), math.floor(cy - lh / 2), U4(1, 1, 1, al), nm);
                 DL.T(dl, math.floor(nx) + 1, math.floor(cy - lh / 2), U4(1, 1, 1, 0.35 * al), nm);   -- (a touch heavier, as the picture's)
                 unsized(pn);
+            end
+            if it.trade and not it.fake and al > 0.3 then               -- (Accept / Decline: pills - white for yes)
+                local bh_ = math.floor(rh * 0.56);
+                local bx_ = math.floor(nx + nw + 18 * sc);
+                local by_ = math.floor(cy - bh_ / 2);
+                for k_, b_ in ipairs({ { 'ACCEPT', true }, { 'DECLINE', false } }) do
+                    local px_ = bx_ + (k_ - 1) * (btw_ + 8 * sc);
+                    imgui.SetCursorScreenPos({ px_, by_ });
+                    local hit_ = imgui.InvisibleButton('##yui_trd' .. k_, { btw_, bh_ });
+                    local ov_ = imgui.IsItemHovered();
+                    if b_[2] then DL.RF(dl, px_, by_, px_ + btw_, by_ + bh_, U4(0.93, 0.93, 0.96, (ov_ and 1 or 0.88) * al), bh_ / 2);
+                    else DL.RF(dl, px_, by_, px_ + btw_, by_ + bh_, U4(1, 1, 1, (ov_ and 0.16 or 0.08) * al), bh_ / 2); DL.R(dl, px_, by_, px_ + btw_, by_ + bh_, U4(1, 1, 1, 0.25 * al), bh_ / 2, C.rall or 15, 1); end
+                    local pw2 = sized('chat', 13 * sc);
+                    local tw2 = tonumber((imgui.CalcTextSize(b_[1]))) or 0;
+                    local th2 = imgui.GetTextLineHeight();
+                    DL.T(dl, px_ + (btw_ - tw2) / 2, by_ + (bh_ - th2) / 2, b_[2] and U4(0.08, 0.08, 0.10, al) or U4(1, 1, 1, al), b_[1]);
+                    unsized(pw2);
+                    if hit_ then C.trade_answer(b_[2]); end
+                end
             end
         end
         ry = ry + rh + gap;
@@ -15454,10 +16784,10 @@ function LAYOUT.apply(o, eq, dps)
     end
     if dps and YUI_DPS and YUI_DPS.place then pcall(YUI_DPS.place, dps[1], dps[2]); end
 end
--- What MY LAYOUTS keep besides the places: every size, length and thickness (the look, colours and on / off stay as they are)
-LAYOUT.SIZES = { 'scale', 'target_scale', 'target_name_scale', 'target_w', 'target_bar_h', 'fan_scale', 'mb_scale', 'mbar_scale', 'ecast_scale',
+-- What MY LAYOUTS keep besides the places: every size, length and thickness (and, since 1.1.33, every other setting too - see save_mine)
+LAYOUT.SIZES = { 'scale', 'target_scale', 'target_name_scale', 'target_w', 'target_bar_h', 'fan_scale', 'fan_hub', 'mb_scale', 'mbar_scale', 'ecast_scale',
     'ecast_font', 'target_buff_scale', 'sub_scale', 'sub_w', 'enemy_scale', 'enemy_w', 'party_scale', 'icon_scale', 'ally1_scale',
-    'ally1_icon', 'ally2_scale', 'ally2_icon', 'buff_scale', 'party_buff_scale', 'party_timer_scale', 'party_bar_h', 'party_vgap', 'card_h', 'exp_scale', 'exp_w', 'cast_scale',
+    'ally1_icon', 'ally2_scale', 'ally2_icon', 'buff_scale', 'party_buff_scale', 'party_timer_scale', 'party_bar_h', 'party_vgap', 'ally_gap', 'card_h', 'card_w', 'party_tp_text', 'party_dist_text', 'party_dist_x', 'timers_text', 'timers_mob_scale', 'timers_mob_text', 'timers_mob_w', 'timers_mob_h', 'exp_scale', 'exp_w', 'cast_scale',
     'cast_w', 'cast_h', 'pet_scale', 'pet_w', 'gb_scale', 'gil_scale', 'exp_text', 'chat_size', 'chat_gap', 'timers_scale', 'timers_w', 'timers_h', 'strip_icon' };
 LAYOUT.EQ_SIZES = { 'sb_scale', 'sb_thick', 'sb_hp_size', 'sb_hp_len', 'sb_mp_thick', 'sb_mp_size', 'sb_mp_len', 'sb_tp_size', 'sb_tp_len' };
 function LAYOUT.use(name) LAYOUT.apply(LAYOUT.build(name)); LAYOUT.msg = 'Layout: ' .. name; end
@@ -15512,6 +16842,11 @@ end
 function LAYOUT.save_mine(n)
     local t = LAYOUT.capture();
     t.link = cfg.target_fx == 'link';                                -- (the mode it was saved in: loading it goes back to that mode)
+    local all = {};                                                  -- (and every other setting as it is now: looks, colours, on / off - loading it brings back exactly this)
+    for k, v in pairs(cfg) do
+        if type(k) == 'string' and not LAYOUT.SKIP[k] and not LAYOUT.NOKEEP[k] then all[k] = LAYOUT.plain(v); end
+    end
+    t.all = all;
     local all = {};
     if type(cfg.layouts) == 'table' then for k, v in pairs(cfg.layouts) do all[k] = v; end end
     all['mine' .. n] = t;
@@ -15527,6 +16862,11 @@ function LAYOUT.load_mine(n)
     local eq = {};
     for k, v in pairs(t.eq or {}) do eq[k] = v; end
     if t.link ~= nil and (t.link == true) ~= (cfg.target_fx == 'link') then pcall(C.setmode, t.link == true); end   -- (its own mode first: Normal or Hex link)
+    if type(t.all) == 'table' then                                   -- (every setting as it was saved: looks, colours, on / off - a layout saved before this keeps only places and sizes)
+        for k, v in pairs(t.all) do
+            if type(k) == 'string' and not LAYOUT.SKIP[k] and not LAYOUT.NOKEEP[k] then cfg[k] = LAYOUT.plain(v); end
+        end
+    end
     LAYOUT.apply(o, eq, (type(t.dps) == 'table' and t.dps[1]) and t.dps or nil);
     LAYOUT.msg = 'Loaded: ' .. (LAYOUT.name(n) or ('Layout ' .. n)) .. '.';
 end
@@ -15536,6 +16876,8 @@ end
 -- screen everything lands in the same spot. Importing keeps what you had first (UNDO puts it back).
 LAYOUT.SKIP = { cm_v1 = true, setup_done = true, welcomed = true, mode_v1 = true, mode_v2 = true, mode_v3 = true, md_backup = true, g_backup = true, g_dps0 = true, layouts = true,
     layout_names = true, share_backup = true, locked = true };
+LAYOUT.NOKEEP = { undo = true, undo_stack = true, ms_norm = true, ms_hex = true, ms_soul = true, ws_prev = true };                  -- (MY LAYOUTS: not kept in a layout)
+C.LAYOUT = LAYOUT;                                                   -- (for testing from the console)
 function LAYOUT.plain(v, d)                                          -- (a copy with only numbers, strings, booleans and tables of them)
     d = d or 0;
     local tv = type(v);
@@ -16890,10 +18232,12 @@ local function draw_window()
                 end
                 if imgui.IsItemHovered() then YUI_TIP('Fit my screen: the size for your resolution\n(1080p 1x, 1440p 1.35x, 4K 2x)'); end
             end
-            hint('Makes every piece bigger or smaller at once - after a new monitor or resolution, one click. Each piece\'s own Size still works on top of it.');
+            if cfg.res_follow == nil then cfg.res_follow = true; end
+            row_switch('##yui_resf', 'Follow the resolution', 'res_follow', 'On: when you change the resolution (in VanaCore or the game), every piece resizes by the same amount and keeps its place on the screen, so the UI looks the same at 1080p, 1440p or 4K. Your own sizes stay yours. Off: nothing changes by itself.');
+            hint('Makes every piece bigger or smaller at once. With Follow the resolution on it changes by itself when your resolution does. Each piece\'s own Size still works on top of it.');
             section('MY LAYOUTS');                                   -- five of your own, each with a name
             pcall(LAYOUT.mine_rows);
-            hint('Give it a name, SAVE keeps where everything is now and every size (sizes, lengths, thickness, the chat and the Damage Meter too), LOAD puts it all back. Colours, looks and on / off are not changed.');
+            hint('Give it a name, SAVE keeps your whole UI as it is now: where everything is, every size, look, colour and on / off (the chat and the Damage Meter too). LOAD puts it all back exactly as saved. (A layout saved before 1.1.33 keeps only places and sizes: SAVE it again.)');
             section('SHARE MY UI');                                  -- your whole UI as a code, for someone else (or theirs for you)
             local oksh, shh = pcall(LAYOUT.share_rows);
             hint(oksh and shh or 'Share my UI: something went wrong.');
@@ -16908,7 +18252,7 @@ local function draw_window()
                 if cfg.mode_icon ~= false then row_switch('##yui_modec', 'Stick to the chat', 'ms_chat', "On: YUNA UI sits on the chat's top edge, at its corner, and follows it when you move or resize the chat. Off: drag it anywhere."); end
                 row_switch('##yui_modei', 'Mode switch icon', 'mode_icon', 'On: YUNA UI on the screen shows your mode - its UI pink in Vex mode, gold in Hex link - and a click turns it over to the other one. Drag it anywhere.');
             end
-            JP.settings_ui(section, accent_button, hint);   -- [JP]
+            JP.settings_ui(section, accent_button, hint, row_slider, row_pick);   -- [JP]
             if not YUI_PUBLIC then                                   -- (the mode: a card of its own - it was at the top of the panel)
                 section('MODE');
                 local HX_ = cfg.target_fx == 'link';
@@ -16964,6 +18308,8 @@ local function draw_window()
                     hint('The enemy cast size is a share of the target bar size.');
                 else
                     row_slider('##yui_fansc', 'Skillchain fan size', 'fan_scale', 0.4, 2.0, 0.05, '%.2fx');
+                    if cfg.fan_hub == nil then cfg.fan_hub = 1.0; end
+                    row_slider('##yui_fanhub', 'Fan timer size', 'fan_hub', 0.5, 2.5, 0.05, '%.2fx');   -- (the countdown the fan branches off)
                     row_slider('##yui_mbsc', 'Magic Burst size', 'mb_scale', 0.5, 2.5, 0.05, '%.2fx');
                     row_slider('##yui_ecsc', 'Enemy cast size', 'ecast_scale', 0.4, 2.0, 0.05, '%.2fx');
                     row_slider('##yui_ecft', 'Enemy cast text', 'ecast_font', 0.5, 2.5, 0.05, '%.2fx');
@@ -17018,11 +18364,33 @@ local function draw_window()
             end);
             row_switch('##yui_pp', 'Pretend members (to place it)', 'party', 'Fills the empty places so you can place and size the list when alone.', PREVIEW, function() end);
             row_slider('##yui_s_p', 'Size', 'party_scale', 0.6, 2.0, 0.05, '%.2fx');
+            if ALLY.ALLB then                                        -- (the turned cards' own settings: only while the cards are turned - they change only them)
+                if cfg.card_w == nil then cfg.card_w = 1.0; end
+                if cfg.card_h == nil then cfg.card_h = 1.0; end
+                row_slider('##yui_s_pcw', 'Turned card length', 'card_w', 0.6, 1.6, 0.05, '%.2fx');
+                row_slider('##yui_s_pch', 'Turned card height', 'card_h', 0.7, 1.6, 0.05, '%.2fx');
+                if cfg.party_tp_text == nil then cfg.party_tp_text = 1.0; end
+                if cfg.party_dist_text == nil then cfg.party_dist_text = 1.0; end
+                row_slider('##yui_s_ptpt', 'TP text size', 'party_tp_text', 0.6, C.tlim(), 0.05, '%.2fx');
+                if cfg.party_dist ~= false then row_slider('##yui_s_pdt', 'Distance text size', 'party_dist_text', 0.6, C.tlim(), 0.05, '%.2fx'); end
+                if not YUI_HEX and cfg.party_dist ~= false then      -- (Vex: the yalms after the name, slid back or forward)
+                    if cfg.party_dist_x == nil then cfg.party_dist_x = 0; end
+                    row_slider('##yui_s_pdx', 'Distance position', 'party_dist_x', -40, 120, 1, '%d');
+                end
+            end
+            if cfg.party_vgap == nil then cfg.party_vgap = 0; end
+            if cfg.ally_gap == nil then cfg.ally_gap = 0; end
+            row_slider('##yui_s_pvg', 'Space between members', 'party_vgap', -10, 30, 1, '%d');
+            if cfg.ally_anchor then                                  -- (only for alliances anchored to the party - free ones sit where you put them)
+                row_slider('##yui_s_alg', 'Space between lists', 'ally_gap', -10, 60, 1, '%d');
+            end
+            hint('Space between members: more or less room between the cards in a list.' .. (cfg.ally_anchor and ' Space between lists: between the party and the alliances.' or ' (Anchor the alliances to the party - the two dots by PARTY - for a Space between lists slider.)'));
+            hint('Card length / height: the party and alliance cards longer or shorter, taller or flatter - Size makes everything bigger or smaller.');
             row_switch('##yui_pfar', 'Fade far members', 'party_dim_far', 'On: a member farther than the distance below (out of range for spells like Cure) is shown faded, party and alliance. A pretend member shows it while you place the list.');
             if cfg.party_dim_far ~= false then row_slider('##yui_s_pfar', 'Far from', 'party_range', 10, 50, 0.5, '%.1f yalms'); end
             row_pick('##yui_pbside', 'Buffs side', 'party_buff_side', { { 'left', 'Left of the cards' }, { 'right', 'Right of the line' } });
             if cfg.party_buff_timers == nil then cfg.party_buff_timers = true; end
-            row_switch('##yui_pbtm', 'Buff timers', 'party_buff_timers', "On: time left under the buff icons (1h, 5m, 45) - yours exact, your other characters' exact too, and the buffs you cast on others. The buffs stay on one row (their timers need the room under it).");
+            row_switch('##yui_pbtm', 'Buff timers', 'party_buff_timers', "On: time left under the buff icons (1h, 5m, 45) - yours, and your other characters' (with YunaUI running there too). Other players' buffs show without timers. The buffs stay on one row (their timers need the room under it).");
             row_slider('##yui_s_pbsz', 'Buff icon size', 'party_buff_scale', 0.6, 2.5, 0.05, '%.2fx');   -- (the party's buffs only; BUFFS > Size is for all)
             if cfg.party_buff_timers ~= false then
                 row_slider('##yui_s_ptsz', 'Timer text size', 'party_timer_scale', 0.6, 2.0, 0.05, '%.2fx');   -- (grows with the icons too)
@@ -17032,13 +18400,21 @@ local function draw_window()
             end
             row_switch('##yui_pbord', 'FFXI buff order', 'party_buff_ffxi', "On: each member's buffs read left to right in the game's own order. Off: the newest next to the card.");
             row_pick('##yui_ptagc', 'Job tag colours', 'party_tag_col', { { 'job', 'Each job its colour' }, { 'role', 'By role' } });
-            if cfg.target_fx ~= 'link' then                          -- (Hex link: the plates' bars, front and turned, are their own size - these did nothing there)
+            if YUI_HEX then                                          -- (Hex link: two looks for the turned cards)
+                if cfg.turn_look == nil then cfg.turn_look = 'box'; end
+                row_pick('##yui_pturn', 'Turned cards', 'turn_look', { { 'box', 'Job box on the right' }, { 'tab', 'Job tag on the name, TP on the left' }, { 'bare', 'No frame: HP and MP on one line' } });
+            end
+            if cfg.target_fx ~= 'link' and not ALLY.ALLB then        -- (Vex, cards not turned only: Hex link's plates and the turned cards' bars are their own size)
                 row_slider('##yui_phth', 'HP bar thickness', 'party_hp_th', 0.5, 3.0, 0.05, '%.2fx');
                 row_slider('##yui_pmth', 'MP bar thickness', 'party_mp_th', 0.5, 3.0, 0.05, '%.2fx');
             end
             row_switch('##yui_pdist', 'Distance', 'party_dist', 'On: how far each member is (in yalms), small, after the name. Pink when out of range.');
+            hint(ALLY.ALLB and 'Turned cards: Turned card length / height, TP text size and the distance settings change only them. Turn them back (the card icon by PARTY) for the other card settings.'
+                or 'Turn the cards over (the card icon by PARTY) for their own settings: length, height, TP and distance text.');
             row_switch('##yui_pzone', 'Zone of members elsewhere', 'party_zone', 'On: a member in another zone shows where they are, under their name (party and alliance).');
             if cfg.party_invite == nil then cfg.party_invite = true; end
+            if cfg.trade_alert == nil then cfg.trade_alert = true; end
+            row_switch('##yui_ptrd', 'Trade request alert', 'trade_alert', 'On: when someone wants to trade with you, a card shows who, with ACCEPT and DECLINE, until the trade opens or is cancelled; if you are in another window, the game flashes in the taskbar. It sits with the item popup.');
             row_switch('##yui_pinv', 'Party invite alert', 'party_invite', 'On: when someone invites you to a party or alliance, a card shows who (with /join to accept); if you are in another window, the game flashes in the taskbar. Move the card in Edit Mode (it sits with the item popup). Its sound: SOUND ALERTS.');
             section('ALLIANCE');
             row_switch('##yui_a', 'Show', 'alliance');
@@ -17071,6 +18447,8 @@ local function draw_window()
                 if cfg.tp_fx == nil then cfg.tp_fx = true; end
                 row_switch('##yui_tpfx', 'TP bar effect', 'tp_fx', 'On: from 1000 TP your TP bar crackles like the target bar, in gold - stronger at 2000, strongest at 3000. Off: a plain TP bar.');
                 row_pick('##yui_myhpc', 'HP bar colour', 'my_hp_color', { { 'pink', 'Pink' }, { 'white', 'White' } }, nil, function() pcall(C.apply_hp); save(); end);
+            else                                                     -- (the gold mode: its HP bars gold, or Void red)
+                row_pick('##yui_hexhpc', 'HP bar colour', 'hex_hp_color', { { 'gold', 'Gold' }, { 'red', 'Void red' } }, nil, function() pcall(C.apply_hp); save(); end);
             end
             if C.head_bars_on() then
                 hint('Over your head: thin HP and MP bars, the TP as three dots (gold when full: a weapon skill is ready) and the numbers beside them.');
@@ -17135,6 +18513,12 @@ local function draw_window()
             if accent_button('PAD: LEARN AGAIN##yui_cpad', { ROW_W, 0 }) then cfg.pad_log, cfg.pad_big = nil, nil; legacy.pad_toggle(false); save(); end
             hint("YunaUI learns your pad: the button that opens the game's log (Triangle, X...) then opens YunaUI's chat instead. Learn again: forget it, then press your log button once.");
             row_switch('##yui_c2', 'Split combat log', 'chat_split', 'On: battle messages go to a second chat window of their own (move and size it like the first).');
+            if cfg.chat_split then                                   -- (the anchors as switches too: an anchor button covered by another window was hard to reach)
+                row_switch('##yui_c2l', 'Combat log joined to the chat', 'chat_link', 'On: the combat log sits right beside the chat, the same size (its anchor at its bottom right does the same). Off: it moves on its own.', nil, function() cfg.chat_link_v = false; cw[2].relink = true; end);
+            end
+            if (cfg.equip_look or 'wheel') == 'strip' and cfg.strip_show ~= false then
+                row_switch('##yui_sanc', 'Gear card joined to the chats', 'strip_anchor', 'On: the gear card sits in the row of chats, between the chat and the combat log (its anchor over the card does the same). Off: it moves on its own.', nil, function() cw[1].relink = true; cw[2].relink = true; end);
+            end
             hint('Main chat shows:');
             for _, q in ipairs(C.C3) do row_switch('##yui_cm_' .. q[1], '   ' .. q[2], 'cm_' .. q[1], 'Off: ' .. q[2] .. " are left out of the main chat's All tab (its " .. q[2] .. ' tab still shows them).'); end
             row_switch('##yui_c3', 'Third chat', 'chat3', 'On: one more chat window (move and size it like the others) for the channels you pick below - good on a wide screen.', nil, C.c3_pick);
@@ -17218,6 +18602,7 @@ local function draw_window()
             row_slider('##yui_s_cg', 'Line spacing', 'chat_gap', 0, 16, 1, '%d px');
             hint('Line spacing: the room between rows, also inside a long message.');
             hint('Font: ' .. (fonts.chat_name or 'AvantGarde not found - using a fallback'));
+            if JP.chat_fx_ui then JP.chat_fx_ui(section, accent_button, hint, row_slider, row_switch, row_pick); end   -- [JP]
             section('COLOURS');
             hint('Each channel\'s colour is used for its text and (Clear look) for the bar on the left of its messages.');
             row_slider('##yui_cbri', 'Brightness', 'chat_bright', 0.6, 2.0, 0.05, '%.2fx');
@@ -17231,11 +18616,17 @@ local function draw_window()
             row_switch('##yui_tm', 'Show', 'timers', 'Your job ability and spell recasts, shortest at the top (a preview shows while this tab is open).');
             row_switch('##yui_tma', 'Job abilities', 'timers_abils');
             row_switch('##yui_tms', 'Spells', 'timers_spells');
+            row_switch('##yui_tmmob', 'Debuffs on your target', 'timers_mob', 'On: the debuffs YOU put on the monster you target (Dia, Slow, Paralyze...) show here too, in red, with how long they have left - so you know when to cast them again.');
+            if cfg.timers_mob == true then
+                row_switch('##yui_tmsep', 'Debuffs in their own window', 'timers_mob_sep', 'On: the debuffs on your target get a window of their own - drag it anywhere (Edit Mode, or here while this tab is open). Off: they show in the Timers list.');
+            end
             row_switch('##yui_tmr', 'READY flash', 'timers_flash', 'A short flash with READY when a cooldown comes back.');
             row_switch('##yui_tmu', 'Grow upward', 'timers_up', 'On: the shortest sits at the bottom and the list grows up from there.');
             row_pick('##yui_tmf', 'Time', 'timers_fmt', { { 'short', '4:51' }, { 'clock', '00:04:51' } });
             section('SIZE');
             row_slider('##yui_tmsc', 'Size', 'timers_scale', 0.6, 2.0, 0.05, '%.2fx');
+            if cfg.timers_text == nil then cfg.timers_text = 1.0; end
+            row_slider('##yui_tmtx', 'Text size', 'timers_text', 0.6, 2.0, 0.05, '%.2fx');   -- (the names and times only - the bars stay)
             row_slider('##yui_tmw', 'Length', 'timers_w', 120, 600, 10, '%d px');
             row_slider('##yui_tmh', 'Thickness', 'timers_h', 2, 12, 1, '%d px');
             row_slider('##yui_tmn', 'Most shown', 'timers_max', 3, 20, 1, '%d');
@@ -17249,6 +18640,28 @@ local function draw_window()
                 save();
             end
             hint('Drag the list to move it.');
+            if cfg.timers_mob == true then                           -- (the debuffs on your target: their own colours - and sizes in their own window)
+                section('DEBUFFS ON YOUR TARGET');
+                if cfg.timers_mob_sep == true then
+                    if cfg.timers_mob_scale == nil then cfg.timers_mob_scale = tonumber(cfg.timers_scale) or 1; end
+                    if cfg.timers_mob_text == nil then cfg.timers_mob_text = tonumber(cfg.timers_text) or 1; end
+                    if cfg.timers_mob_w == nil then cfg.timers_mob_w = math.floor((tonumber(cfg.timers_w) or 260) * 1.35); end
+                    if cfg.timers_mob_h == nil then cfg.timers_mob_h = tonumber(cfg.timers_h) or 4; end
+                    row_slider('##yui_tmbsc', 'Size', 'timers_mob_scale', 0.6, 2.0, 0.05, '%.2fx');
+                    row_slider('##yui_tmbtx', 'Text size', 'timers_mob_text', 0.6, 2.0, 0.05, '%.2fx');
+                    row_slider('##yui_tmbw', 'Length', 'timers_mob_w', 160, 700, 10, '%d px');
+                    row_slider('##yui_tmbh', 'Thickness', 'timers_mob_h', 2, 12, 1, '%d px');
+                else
+                    hint('Their sizes are the Timers list\'s. Turn on Debuffs in their own window for sizes of their own.');
+                end
+                colour_row('timers_cmob', 'Debuffs', { 1.00, 0.45, 0.45 }, true);
+                colour_row('timers_cmn', 'Monster name', { 0.92, 0.88, 0.96 });
+                colour_row('timers_carrow', 'Arrow', { 1, 1, 1 });
+                if accent_button('RESTORE DEBUFF COLOURS##yui_tmbcr', { ROW_W, 0 }) then
+                    cfg.timers_cmob, cfg.timers_cmn, cfg.timers_carrow = nil, nil, nil;
+                    save();
+                end
+            end
         elseif tab == 9 then
             ------------------------------------------------------------------ MINIMAP
             section('MINIMAP');
@@ -17315,6 +18728,7 @@ local function draw_window()
                 row_slider('##yui_mbsc', 'Size', 'mbar_scale', 0.5, 2.0, 0.05, '%.2fx');
                 row_switch('##yui_mbtt', 'Buttons touching', 'mb_tight', 'On: the buttons sit right next to each other, no gap between them.');
                 row_switch('##yui_mbin', 'Instant (no animation)', 'mb_instant', 'On: the bar is there at once - no buttons popping in, no bounce, flash or rings when you use a macro.');
+                row_switch('##yui_mbarw', 'Ctrl / Alt + arrows pick a macro', 'mb_arrows', "On: with Ctrl or Alt held, Left / Right move the bar's highlight and Enter runs it. Off: they are the game's - Ctrl + Left / Right pages through your inventory. Ctrl / Alt + 1 to 0 always work.");
                 hint('Keyboard: hold Ctrl or Alt and press 1 to 0, as in the game. Controller: hold ' .. (C.mb_l1() and 'L1 or R1' or 'L2 or R2') .. ', pick with the D-pad left / right, Cross (A) runs it. Move the bar in Edit Mode. Right-click a button to edit that macro.');
             end
         elseif tab == 10 then
@@ -17323,6 +18737,7 @@ local function draw_window()
             row_switch('##yui_lootw', 'Show the pool', 'loot_win', "On: when something drops, YunaUI's own treasure pool shows it: time left, who is winning, and Lot / Pass buttons. Click an item to keep it picked.");
             row_slider('##yui_s_loot', 'Pool size', 'loot_scale', 0.6, 2.0, 0.05, '%.2fx');
             if cfg.loot_chest == nil then cfg.loot_chest = true; end
+            cfg.loot_auto = nil;
             row_switch('##yui_lootch', 'Chest', 'loot_chest', "On: when something drops, a small treasure chest shows at the party list's top left instead of the whole list - click it and the list comes out; MINIMISE sends it back in. Off: the list shows by itself, as before.");
             if cfg.loot_chest ~= false then
                 row_slider('##yui_s_chest', 'Chest size', 'loot_chest_size', 0.5, 2.5, 0.05, '%.2fx');
@@ -18111,7 +19526,7 @@ function C.macrobar()
     M.ktog = 0;                                                      -- (the keyboard is always hold to show, as the game: a Ctrl / Alt tap never keeps it open - Press to show is the controller's only)
     M.kbk = M.kbk or {};                                             -- (Ctrl / Alt held: the arrows move the pick, Enter runs it - read as the digits are)
     for vk, w in pairs(C.MB_VK or {}) do
-        local down = held ~= 0 and C.mb_key(vk);
+        local down = held ~= 0 and cfg.mb_arrows == true and C.mb_key(vk);   -- (ACTION BARS > Ctrl / Alt + arrows: off - not the bar's)
         if down and not M.kbk[vk] then
             if M.dbg then msg(string.format('[mb] key %02X held=%d mine=%s ok=%s hid=%s sel=%s', vk, held, tostring(C.mb_mine()), tostring(M.ok), tostring(M.hid), tostring(M.sel))); end
             if C.mb_mine() and not C.mb_free() then local okk, er = pcall(C.mb_kbact, w, held); if not okk and M.dbg then msg('[mb] error: ' .. tostring(er)); end end
@@ -18134,6 +19549,7 @@ function C.macrobar()
     local picking = false;                                           -- (the game's arrow is up - <st>, <stal>, <stnpc>: the bar steps aside, the pad all the game's)
     picking = C.mb_picking();
     if picking then M.tog = 0; padrow = 0; if held == raw then held = 0; end end
+    if raw ~= 0 and C.mb_inmenu() then M.tog = 0; padrow = 0; if held == raw then held = 0; end end   -- (a game menu open: the triggers are the menu's - the bar doesn't open)
     if padrow ~= M.padrow then                                       -- (a row just opened: the highlight where you left it)
         M.padrow = padrow;
         if padrow ~= 0 then M.sel = M.lastsel[padrow] or 0; end
@@ -18204,6 +19620,8 @@ C.HPCOL = { pink  = { { 1.00, 0.36, 0.62 }, { 0.86, 0.24, 0.86 }, { 1.00, 0.42, 
             red   = { { 1.00, 0.32, 0.30 }, { 0.80, 0.10, 0.20 }, { 1.00, 0.45, 0.42 } },
             white = { { 1.00, 1.00, 1.00 }, { 0.80, 0.80, 0.86 }, { 1.00, 1.00, 1.00 } } };
 C.HEXHP = { { 1.00, 0.84, 0.42 }, { 0.95, 0.56, 0.16 }, { 1.00, 0.88, 0.55 } };
+C.HEXHPS = { gold = { { 1.00, 0.84, 0.42 }, { 0.95, 0.56, 0.16 }, { 1.00, 0.88, 0.55 } },   -- (BARS > HP bar colour in the gold mode: Gold, or Shadow red -
+             red  = { { 1.00, 0.27, 0.27 }, { 0.58, 0.07, 0.10 }, { 1.00, 0.58, 0.56 } } };   -- (a touch brighter: it was too dark)   --  deep red fading to near black; its number a lighter red)
 -- HP bar colour by job (BARS > HP colour by job): each job its own (light end, dark end), for your bars and your party's
 C.JOBHP = {
     [1] = { { 1.00, 0.50, 0.28 }, { 0.78, 0.18, 0.10 } }, [2] = { { 0.96, 0.86, 0.62 }, { 0.72, 0.58, 0.32 } },     -- WAR fire, MNK sand
@@ -18347,6 +19765,11 @@ function C.apply_hp()
     if YUI_HEX and cfg.head_bars ~= 'head' then cfg.head_bars = 'head'; end   -- (Hex link: your bars always over your head - no other place)
     YUI_MP_COL = C.MPCOL;
     C.mpb1, C.mpb2 = C.mp, C.mp2;
+    do                                                               -- (the gold mode's HP colour, as picked: copied into C.HEXHP's own tables, so every
+        local src_ = C.HEXHPS[cfg.hex_hp_color or 'gold'] or C.HEXHPS.gold;   --  bar that holds them changes at once)
+        for i_ = 1, 3 do for k_ = 1, 3 do C.HEXHP[i_][k_] = src_[i_][k_]; end end
+    end
+    YUI_TINT_ON = (cfg.target_fx == 'link') and (cfg.hex_hp_color == 'red');   -- (Void red: the gold look's accents red and white)
     if YUI_HEX then                                                  -- Hex link mode: gold HP everywhere, azure MP
         C.hpb1, C.hpb2 = C.HEXHP[1], C.HEXHP[2];
         YUI_HP_COL = C.HEXHP;
@@ -18355,6 +19778,11 @@ function C.apply_hp()
         C.tgt1, C.tgt2 = C.HEXHP[3], C.HEXHP[2];
     end
     YUI_HEXCOL = { gold = PANEL.GOLD, gold2 = PANEL.GOLD2, azure = C.HEXMP[1], azure2 = C.HEXMP[3] };
+    if YUI_TINT_ON then                                              -- (Void red: the meter's and the bars' 'gold' handed over red / white)
+        local function t_(c) local r_, g_, b_ = YUI_TINT(c[1], c[2], c[3]); return { r_, g_, b_, c[4] }; end
+        YUI_HEXCOL.gold, YUI_HEXCOL.gold2 = t_(PANEL.GOLD), t_(PANEL.GOLD2);
+        YUI_HEXCOL.azure, YUI_HEXCOL.azure2 = { 0.96, 0.97, 1.0 }, { 1, 1, 1 };   -- (its azure white: red and white)
+    end
     YUI_HP_OUTLINE = cfg.hp_outline ~= false;                        -- (equip.lua: the thin black edge on your HP bar)
 end
 -- A thin black edge round a bar (the whole track), so it always shows on any ground
@@ -18385,7 +19813,7 @@ YMAP.ACOLS = { white = { 1, 1, 1 }, pink = { 1.00, 0.55, 0.78 }, violet = { 0.70
 function YMAP.linecol()                                              -- the map's lines: Hex link mode's azure (its MP bar), else your HP bar's colour
     local jc = C.myjobcol and C.myjobcol();
     if jc then return { 1, 1, 1 }; end                               -- (BARS > HP colour by job: white lines in the red frame)
-    if YUI_HEX then return C.HEXMP[1]; end
+    if YUI_HEX then return YUI_AZ(); end                             -- (Void red: white lines)
     if cfg.map_lines == 'white' then return YMAP.COLS.white; end     -- (MINIMAP > Lines: White)
     local h = (type(YUI_HP_COL) == 'table' and type(YUI_HP_COL[1]) == 'table') and YUI_HP_COL[1] or YMAP.COLS.pink;
     return h;
@@ -18863,6 +20291,15 @@ function YMAP.hpsg_draw(dl, zid, P, sc, inside, myz)              -- (a pale blu
         end
     end
 end
+-- Your target is a player outside your party / alliance (players are entity 0x400-0x6FF; the party has its own dots)
+YMAP.PCCOL = { 0.80, 0.88, 1.0, 1 };
+function YMAP.tgt_pc(party, zid, tidx)
+    if tidx < 0x400 or tidx > 0x6FF then return false; end
+    for i = 0, 17 do
+        if party:GetMemberIsActive(i) ~= 0 and party:GetMemberZone(i) == zid and party:GetMemberTargetIndex(i) == tidx then return false; end
+    end
+    return true;
+end
 -- What sits on the map: monsters, the party in their role colours, the target, and you (the glowing arrow)
 function YMAP.marks(dl, ent, party, zid, me, tomap, sc, inside, tilted)
     local tidx = target_index() or 0;
@@ -18915,11 +20352,12 @@ function YMAP.marks(dl, ent, party, zid, me, tomap, sc, inside, tilted)
         local ok, tx, ty = pcall(function() return ent:GetLocalPositionX(tidx), ent:GetLocalPositionY(tidx); end);
         if ok and tx then
             local sx, sy = tomap(tx, ty);
+            if inside(sx, sy) and YMAP.tgt_pc(party, zid, tidx) then dot(tx, ty, YMAP.PCCOL, 3.2 * sc, false); end   -- (a player outside the party: a pale blue dot)
             if inside(sx, sy) then DL.C(dl, sx, sy, 5 * sc, U4(1, 1, 1, 0.95), 16, 1.6); end
         end
     end
     local px, py = tomap(ent:GetLocalPositionX(me) or 0, ent:GetLocalPositionY(me) or 0);
-    pcall(YMAP.exits_draw, dl, zid, function(wx, wy) return tomap(wx, wy); end, sc, inside, ent:GetLocalPositionZ(me));   -- (MINIMAP > Zone exits)
+    YUI_TINTW(YMAP.exits_draw, dl, zid, function(wx, wy) return tomap(wx, wy); end, sc, inside, ent:GetLocalPositionZ(me));   -- (MINIMAP > Zone exits)
     pcall(YMAP.hpsg_draw, dl, zid, function(wx, wy) return tomap(wx, wy); end, sc, inside, ent:GetLocalPositionZ(me));    -- (MINIMAP > Home Points / Survival Guides)
     pcall(YMAP.track_draw, dl, ent, tomap, sc, inside, px, py);     -- (Widescan > Track: the monster you track)
     local yaw = 0;
@@ -19257,6 +20695,10 @@ function YMAP.d3render(dl, m, ent, party, zid, me, sc, vx, vy, W, H, yaw, pitch,
             end
         end
     end
+    if tidx ~= 0 and tidx ~= me and YMAP.tgt_pc(party, zid, tidx) then   -- (your target, a player outside the party: a pale blue dot with the ring)
+        local ok, tx, ty, tz = pcall(function() return ent:GetLocalPositionX(tidx), ent:GetLocalPositionY(tidx), ent:GetLocalPositionZ(tidx); end);
+        if ok and tx then dot(tx, ty, tz or Z, YMAP.PCCOL, 3.4 * sc, true); end
+    end
     do                                                               -- you: the arrow, laid on the ground and turned your way
         local gy = 0;
         pcall(function() gy = ent:GetLocalPositionYaw(me) or 0; end);
@@ -19288,7 +20730,7 @@ function YMAP.d3render(dl, m, ent, party, zid, me, sc, vx, vy, W, H, yaw, pitch,
             local ex, ey = (sx_ - cxs) / (W / 2), (sy_ - cys) / (H / 2);
             return ex * ex + ey * ey <= 0.80;
         end
-        pcall(YMAP.exits_draw, dl, zid, function(wx, wy, wz) local a_, b_ = proj(wx, wz * hs, wy); return a_, b_; end, sc, inside, Z);   -- (MINIMAP > Zone exits)
+        YUI_TINTW(YMAP.exits_draw, dl, zid, function(wx, wy, wz) local a_, b_ = proj(wx, wz * hs, wy); return a_, b_; end, sc, inside, Z);   -- (MINIMAP > Zone exits)
         pcall(YMAP.hpsg_draw, dl, zid, function(wx, wy, wz) local a_, b_ = proj(wx, wz * hs, wy); return a_, b_; end, sc, inside, Z);    -- (MINIMAP > Home Points / Survival Guides)
         local px_, py_ = proj(X, th, Y);
         if px_ then pcall(YMAP.track_draw, dl, ent, tomap, sc, inside, px_, py_); end
@@ -19442,6 +20884,7 @@ function YMAP.gridpos()                                              -- your pla
     return out;
 end
 function YMAP.title_edge(dl, mid, cyl, sc, low)                     -- (low: on the bottom edge, under the frame)                          -- (MINIMAP > Zone name look > On the frame: the name centred on the frame's
+    local outlined = YUI_HEX and C.halo or outlined;               -- (Hex link: the name has no plate - a soft haze behind it)
     local name = (YMAP.name and YMAP.name ~= '') and YMAP.name or '?';   --  top edge, which breaks round it - YMAP.tgap)
     local now = os.clock();
     if YMAP.tname ~= name then YMAP.tname, YMAP.tt = name, now; end
@@ -19586,6 +21029,7 @@ function YMAP.chip(dl, x0, y0, x1, y1, edge, ea, s, kc, flip)        -- (a slant
     for i = 1, 4 do dl:AddLine(p[i], p[i % 4 + 1], U4(edge[1], edge[2], edge[3], ea), 1); end
 end
 function YMAP.dock(dl, x, y, M, cx, cy, low, MW, MH)                 -- (low: the map at the top of the screen - its jobs and gil go over it)
+    local outlined = C.halo;                                         -- (the words have no plates: a soft haze behind them)
     local H = C.HD;
     local now = os.clock();
     local s = math.max(0.55, M / 220);
@@ -19597,7 +21041,7 @@ function YMAP.dock(dl, x, y, M, cx, cy, low, MW, MH)                 -- (low: th
     -- the frame: a wide box with cut corners round the map
     local pad = 4 * s;
     local lft, top, rgt, bot = cx - MW / 2 - pad, cy - MH / 2 - pad, cx + MW / 2 + pad, cy + MH / 2 + pad;
-    local cut = 0.12 * MH;
+    local cut = 7 * s;                                               -- (small cut corners: a plain box, not a badge)
     local P = { { lft + cut, top }, { rgt - cut, top }, { rgt, top + cut }, { rgt, bot - cut }, { rgt - cut, bot }, { lft + cut, bot }, { lft, bot - cut }, { lft, top + cut } };
     local function frame(pp, f, c_, th, bars)                        -- (a closed shape's outline from its first corner, f of the way; bars: the
         local n = #pp;                                               --  top and bottom edges left out - the EXP and bag bars are drawn there)
@@ -19629,8 +21073,8 @@ function YMAP.dock(dl, x, y, M, cx, cy, low, MW, MH)                 -- (low: th
     local za = now - (YMAP.tt or 0);
     local zf = math.min(1, za / 0.9); zf = 1 - (1 - zf) ^ 3;
     local info = YMAP.dock_on();                                     -- (EXP, gil and bag on the map: off - the frame whole, nothing in it but the day)
-    frame(P, 1, col({ 0, 0, 0 }, 0.55), 4 * s, info);                -- (the first Visor - MINIMAP > Frame > Original)
-    frame(P, zf, col(GO, 0.75), 1.4 * s, info);
+    frame(P, 1, col({ 0, 0, 0 }, 0.30), 2.4 * s, info);              -- (one thin gold line - a faint dark edge under it, readable on snow)
+    frame(P, zf, col(GO, 0.80), 1.1 * s, info);
     if za > 0.6 and za < 1.6 then
         local q = (za - 0.6) / 1.0;
         local sy = top + q * (bot - top);
@@ -19656,7 +21100,7 @@ function YMAP.dock(dl, x, y, M, cx, cy, low, MW, MH)                 -- (low: th
         local inner = 11 * s + tw0 + (wn and (10 * s + 11 * s + ww0) or 0);
         local y0c = top + 3 * s;
         local x0c = lft + cut - (y0c + chh - top) + 3 * s;          -- (its slanted left end on the cut, a hair inside)
-        YMAP.chip(dl, x0c, y0c, x0c + kc + 4 * s + inner + 6 * s + kc * 0.5, y0c + chh, GO, 0.55 * zf, s, kc);
+        -- (no plate: the words alone, outlined - clean)
         local tx, ty = x0c + kc + 4 * s, y0c + (chh - th_) / 2;
         C.hexdot(dl, tx + 4 * s, y0c + chh / 2, 3.5 * s, col(dc, 0.95 * zf));
         outlined(dl, tx + 11 * s, ty, ts, { 0.92, 0.90, 0.85, 0.95 * zf });
@@ -19700,7 +21144,7 @@ function YMAP.dock(dl, x, y, M, cx, cy, low, MW, MH)                 -- (low: th
     local ox = (sh < 0.5) and math.sin(sh * 60) * 3 * s * (1 - sh / 0.5) or 0;
     local near = bmax > 0 and used >= bmax - 5;
     local beat = near and (0.5 + 0.5 * math.sin(now * 6)) or 0;
-    local fc = near and { 1.0, 0.36, 0.40 } or AZ;
+    local fc = near and { 1.0, 0.36, 0.40 } or (YUI_TINT_ON and { 0.96, 0.97, 1.0 } or AZ);   -- (Void red: the bag's line white)
     local f = bmax > 0 and used / bmax or 0;
     -- the level-up burst: the frame's shape opening out of the map in light
     if bu < 1.6 then
@@ -19738,7 +21182,7 @@ function YMAP.dock(dl, x, y, M, cx, cy, low, MW, MH)                 -- (low: th
         local y0c = top + 3 * s;
         local x1c = rgt - cut + (y0c + chh - top) - 3 * s;
         local x0c = x1c - (kc * 0.5 + 6 * s + pw + 5 * s + sw2 + 4 * s + kc);
-        YMAP.chip(dl, x0c, y0c, x1c, y0c + chh, GO, 0.55, s, kc, true);
+        -- (no plate: the words alone)
         local tyc = y0c + (chh - ph) / 2;
         local tx0 = x0c + kc * 0.5 + 6 * s;
         label(pctS, 14 * s, tx0, tyc, { 1, 1, 1, 1 });                -- (the number white)
@@ -19755,8 +21199,7 @@ function YMAP.dock(dl, x, y, M, cx, cy, low, MW, MH)                 -- (low: th
         local y1c = bot - 3 * s;
         local y0c = y1c - chh;
         local pts_ = { { x0c + kc, y0c }, { x1c, y0c }, { x1c - kc, y1c }, { x0c, y1c } };
-        pcall(function() dl:AddConvexPolyFilled(pts_, col({ 0.03, 0.035, 0.055 }, 0.88)); end);
-        for i = 1, 4 do dl:AddLine(pts_[i], pts_[i % 4 + 1], col(fc, 0.55 + 0.3 * beat), 1); end
+        -- (no plate: the count alone, outlined)
         local tyc = y0c + (chh - bh) / 2;
         local base = tyc + bh * 0.80;                                -- (the big number's baseline: the small one sits on it)
         local uw = label(tostring(used), 15 * s, x0c + kc + 6 * s, tyc, near and { 1, 0.7, 0.72, 1 } or { 0.88, 0.95, 1, 1 });
@@ -19788,10 +21231,7 @@ function YMAP.dock(dl, x, y, M, cx, cy, low, MW, MH)                 -- (low: th
     local function edgeL(yy) return low and (lft + cut + (top - yy)) or (lft + cut + (yy - bot)); end   -- (the cut corners' lines, carried on)
     local function edgeR(yy) return low and (rgt - cut - (top - yy)) or (rgt - cut - (yy - bot)); end
     local near_, far_ = low and py1 or py0, low and py0 or py1;     -- (the side by the frame, the side away from it)
-    local function tag4(p)
-        pcall(function() dl:AddConvexPolyFilled(p, col({ 0.03, 0.035, 0.055 }, 0.85)); end);
-        for i = 1, 4 do dl:AddLine(p[i], p[i % 4 + 1], col(GO, 0.55), 1); end
-    end
+    local function tag4(p) end                                       -- (no plates under the jobs and gil: the words alone, outlined - clean)
     local mL, mR = cx - 4 * s, cx + 4 * s;
     local isl = phh * 0.5;                                           -- (the inner ends: a gentler slant, more room for the words)
     tag4({ { edgeL(near_), near_ }, { mL, near_ }, { mL - isl, far_ }, { edgeL(far_), far_ } });
@@ -19835,8 +21275,7 @@ function YMAP.dock(dl, x, y, M, cx, cy, low, MW, MH)                 -- (low: th
         local ds = (diff ~= 0) and ((diff > 0 and '+' or '') .. commas(diff)) or nil;
         local dw = ds and ((tonumber((imgui.CalcTextSize(ds))) or 0) * 0.85 + 8 * s) or 0;
         local gx = edgeR(midy) - 8 * s - gw;                       -- (the amount always inside its block; what changed shows just outside it)
-        C.hexdot(dl, gx - 9 * s, tyy + th / 2, 5 * s, col(C.GOLDH or { 1, 0.76, 0.34 }, 1));   -- (the coin always gold)
-        C.hexdot(dl, gx - 9 * s, tyy + th / 2, 2.5 * s, col(C.GOLDH2 or { 1, 0.9, 0.62 }, 1));
+        do local o_ = YUI_TINT_ON; YUI_TINT_ON = false; C.hexdot(dl, gx - 9 * s, tyy + th / 2, 5 * s, col(C.GOLDH or { 1, 0.76, 0.34 }, 1)); YUI_TINT_ON = o_; end   -- (the coin always gold, one solid hexagon - its pale centre read as white)
         outlined(dl, gx, tyy, gs, { 1, 1, 1, 1 });                   -- (the amount white)
         if ds then
             local fs = FS;
@@ -20070,8 +21509,8 @@ function YMAP.capsule(dl, x, y, M, cx, cy, low, MW, MH)
         local ds = (diff ~= 0) and ((diff > 0 and '+' or '') .. commas(diff)) or nil;
         local dw = ds and ((tonumber((imgui.CalcTextSize(ds))) or 0) * 0.85 + 8 * s) or 0;
         gx = rgt - 4 * s - phh / 2 - 6 * s - gw - dw;
-        DL.CF(dl, gx - 9 * s, tyy + th / 2, 5 * s, U4(0.86, 0.66, 0.24, 1), 14);
-        DL.CF(dl, gx - 9 * s, tyy + th / 2, 3 * s, U4(1, 0.88, 0.50, 1), 12);
+        DL.CF(dl, gx - 9 * s, tyy + th / 2, 5 * s, YUI_U4K(0.86, 0.66, 0.24, 1), 14);
+        DL.CF(dl, gx - 9 * s, tyy + th / 2, 3 * s, YUI_U4K(1, 0.88, 0.50, 1), 12);
         outlined(dl, gx, tyy, gs, { 1, 1, 1, 1 });                   -- (the amount white)
         if ds then
             local fs = FS;
@@ -20147,8 +21586,8 @@ function YMAP.hub(dl, cx, cy, M)                                     -- the jobs
         chip(x0, gw);
         local cr = 5 * s;
         local ccx, ccy = x0 + pad + cr, y + ch / 2;
-        DL.CF(dl, ccx, ccy, cr, U4(0.86, 0.66, 0.24, 1), 16);
-        DL.CF(dl, ccx, ccy, cr * 0.66, U4(1, 0.88, 0.50, 1), 16);
+        DL.CF(dl, ccx, ccy, cr, YUI_U4K(0.86, 0.66, 0.24, 1), 16);
+        DL.CF(dl, ccx, ccy, cr * 0.66, YUI_U4K(1, 0.88, 0.50, 1), 16);
         outlined(dl, x0 + pad + 14 * s, math.floor(y + (ch - lh) / 2), gs, { GOLD[1], GOLD[2], GOLD[3], 1 });
         local diff, ga = C.gil_diff(gil);
         if diff ~= 0 then
@@ -20289,7 +21728,7 @@ function YMAP.glassdock(dl, ix, iy, f)
         local ox = (sh < 0.5) and math.sin(sh * 60) * 3 * f * 3 * (1 - sh / 0.5) or 0;
         local near = bmax > 0 and used >= bmax - 5;
         local beat = near and (0.5 + 0.5 * math.sin(now * 6)) or 0;
-        local fc = near and { 1.0, 0.36, 0.40 } or AZ;
+        local fc = near and { 1.0, 0.36, 0.40 } or (YUI_TINT_ON and { 0.96, 0.97, 1.0 } or AZ);   -- (Void red: the bag's line white)
         local uw = say(tostring(used), 46 * f, X(108) + ox, Y(650), near and { 1, 0.7, 0.72 } or WH);
         say('/' .. tostring(bmax), 34 * f, X(108) + ox + uw + 4 * f, Y(654), { 0.52, 0.66, 0.80 });
         local fr = bmax > 0 and used / bmax or 0;
@@ -20725,7 +22164,7 @@ EDIT.G.STEPS = {
         { { 'mode_icon', 'GENERAL (Mode switch icon)' } } },
     { "Settings", nil, {
         "Type /yui to open the settings: every piece has its own size, look and on / off switch.",
-        "In GENERAL > MY LAYOUTS you can keep five layouts of your own, with their places and sizes." } },
+        "In GENERAL > MY LAYOUTS you can keep five layouts of your own - your whole UI, exactly as you saved it." } },
     { "Make it yours", nil, {
         "Now place everything where you like: drag any piece, it snaps to the grid and lines up with the others. Press DONE when you are happy.",
         "Later: /yui edit to move things again, /yui guide to see this guide again." } },
@@ -20804,7 +22243,7 @@ function EDIT.G.splash()
             DL.RFM(fg, 0, cy, W, cy + bh, c1, c1, c0, c0);
         end);
         local shx = YUI_HEX;                                         -- (Hex link: gold to azure instead of pink to violet)
-        local s1, s2 = shx and C.GOLDH or C.hp, shx and C.HEXMP[1] or C.mp2;
+        local s1, s2 = shx and C.GOLDH or C.hp, shx and YUI_AZ() or C.mp2;
         local f1 = sized('chat', 64 * k);                            -- the big line: letters spreading, pink to violet, a glow behind
         local sp = (4 + 10 * e) * k;
         local tw = spaced_w(G.TITLE, sp);
@@ -21033,7 +22472,7 @@ function EDIT.G.draw()
     local W, H = C.screen();
     local k = math.max(0.8, math.min(1.8, H / 1080));
     local hx = YUI_HEX;
-    local edge, edge2 = hx and C.GOLDH or NEON2, hx and C.HEXMP[1] or C.mp2;
+    local edge, edge2 = hx and C.GOLDH or NEON2, hx and YUI_AZ() or C.mp2;
     G.i = math.max(1, math.min(#G.STEPS, G.i));
     local st = G.STEPS[G.i];
     local key = G.i .. (hx and 'h' or 'n');
@@ -21455,11 +22894,19 @@ ashita.events.register('d3d_present', 'yui_present', function()
     local dt = math.min(0.1, now - last);
     last = now;
     local ok, err = pcall(function()
-        if not AshitaCore:GetFontManager():GetVisible() then return; end
+        local evt_ = false;                                          -- (talking to an NPC, a cutscene: the game's interface is hidden, but
+        if not AshitaCore:GetFontManager():GetVisible() then         --  its log stays - so YunaUI's chat stays too, alone; F11 hides it all)
+            local okh, f11 = pcall(function() return vana.ui.interface_hidden(); end);
+            if (okh and f11) or not cfg.chat then return; end
+            evt_ = true;
+            pcall(function() if not vana.ashita.gui_visible() then vana.ashita.gui_visible(true); end end);   -- (VanaCore hides every ImGui window then: shown again, for the chat)
+        end
         local p = AshitaCore:GetMemoryManager():GetParty();
         if p == nil or p:GetMemberIsActive(0) == 0 then return; end   -- not logged in / zoning
         if YUI_OUT() then return; end
+        pcall(C.res_tick);                                           -- (GENERAL > SIZE > Follow the resolution)
         -- each piece on its own: a problem in one (shown once in chat) never stops the others, the logo or the window
+        if C.PROF then C.PROF_N = (C.PROF_N or 0) + 1; end           -- (/yui prof: frames counted)
         local function piece(fn, ...)
             if YUI_PRES and not YUI_PRES[(C.PF and C.PF[fn]) or '-'] then return; end   -- (the guide: only the slide's own pieces)
             local ma = C.MT.t0 and C.mt_alpha(C.PF and C.PF[fn]) or nil;   -- (a mode's entrance: it fades in as the wave reaches it)
@@ -21467,7 +22914,9 @@ ashita.events.register('d3d_present', 'yui_present', function()
                 if ma <= 0.01 then return; end
                 imgui.PushStyleVar(ImGuiStyleVar_Alpha, ma);
             end
+            local t0_ = C.PROF and os.clock();
             local ok2, e2 = pcall(fn, ...);
+            if t0_ then local k_ = (C.PF and C.PF[fn]) or tostring(fn); C.PROF[k_] = (C.PROF[k_] or 0) + (os.clock() - t0_); end   -- (/yui prof: each piece's time)
             if ma then imgui.PopStyleVar(); end
             if not ok2 then
                 YUI_ERRLOG('draw', e2);
@@ -21480,6 +22929,11 @@ ashita.events.register('d3d_present', 'yui_present', function()
             if YMAP.bygame then piece(YMAP.draw); end
             return;
         end
+        if evt_ then                                                 -- (the chats as you set them: the combat log and the gear card joined in the row too)
+            piece(draw_chat, 1); piece(draw_chat, 2); piece(draw_chat, 3);
+            if C.sanc_on and C.sanc_on() then YUI_EQ_HIDE = true; piece(draw_strip); end
+            return;
+        end   -- (an NPC's menu or a cutscene: only the chat, to read what it says and what you got)
         -- settings copied in from another character? take them now
         if os.clock() >= WATCH.at then                               -- (settings copied in from another character: looked for every 2 s, as the copy
             WATCH.at = os.clock() + 2;                               --  promises - two small files read from disk, off the every-frame path)
@@ -21519,11 +22973,12 @@ ashita.events.register('d3d_present', 'yui_present', function()
         elseif EDIT.was then PREVIEW.party, PREVIEW.alliance = false, false; end
         EDIT.was = EDIT.on;
         C.PF = C.PF or { [draw_target] = 'tgt', [draw_subtarget] = 'sub', [draw_enemies] = 'enemy', [draw_chat] = 'chat',
-            [draw_party] = 'party', [draw_exp] = 'exp', [draw_cast] = 'cast', [PET.draw] = 'pet', [TIMERS.draw] = 'timers',
+            [draw_party] = 'party', [draw_exp] = 'exp', [draw_cast] = 'cast', [PET.draw] = 'pet', [TIMERS.draw] = 'timers', [TIMERS.drawmob] = 'timers',
             [C.head_bars] = 'heads', [draw_strip] = 'strip', [draw_gil] = 'gil', [draw_bag] = 'bag', [YMAP.draw] = 'map', [C.macrobar] = 'mbar', [C.loot_win] = 'loot', [C.got_win] = 'got', [C.modesw] = 'modesw',
             [EDIT.G.dim] = 'all', [EDIT.G.draw] = 'all', [EDIT.G.splash] = 'all', [C.MD.draw] = 'all' };   -- (the guide: which slide shows what)
         piece(EDIT.G.dim);                                           -- (the guide: the screen dimmed under the slide's pieces)
         piece(draw_target, dt);
+        piece(C.bigarrow);                                           -- (a huge monster: its arrow lower)
         piece(FIGHT.edit_pieces);                                    -- (Edit Mode: the target's name, fan and cast)
         piece(FIGHT.win);                                            -- (the fan / enemy cast when placed anywhere)
         piece(draw_subtarget, dt);
@@ -21562,6 +23017,7 @@ ashita.events.register('d3d_present', 'yui_present', function()
         piece(YMAP.draw);                                            -- the minimap (BARS > MINIMAP)
         TIMERS.preview = (ui.open and ui.tab == 7) or EDIT.on;      -- the TIMERS tab (and Edit Mode) show a preview of it
         piece(TIMERS.draw);
+        piece(TIMERS.drawmob);                                       -- (TIMERS > Debuffs in their own window)
         piece(C.loot_win);                                           -- (TREASURE POOL)
         piece(C.got_win);                                            -- (TREASURE POOL > Item popup)
         piece(C.bubble_draw);                                        -- (CHAT > Speech bubbles)
@@ -21601,6 +23057,8 @@ ashita.events.register('packet_in', 'yui_packet', function(e)
     elseif e.id == 0x0D3 then pcall(C.loot_packet, e);
     elseif e.id == 0x0DC then pcall(C.inv_packet, e);                -- (PARTY > Party invite alert)
     elseif e.id == 0x0C8 then pcall(C.inv_close);                    -- (the party formed: the invite's card goes)
+    elseif e.id == 0x021 then pcall(C.trade_packet, e);              -- (PARTY > Trade request alert)
+    elseif e.id == 0x022 then pcall(C.trade_close);                  -- (the trade went on: its card goes)
     elseif e.id == 0x0D2 then pcall(C.loot_drop, e);               -- (an item fell in the pool: it flies in from the monster)              -- (a lot or a pass on a treasure pool item)
     elseif e.id == 0x00E then pcall(read_claim, e);
     elseif e.id == 0x057 then pcall(C.weather_packet, e);
@@ -21690,7 +23148,23 @@ ashita.events.register('dinput_button', 'yui_pad_d', function(e)    -- PlayStati
     end
 end);
 function C.mb_mine()                                                -- (YunaUI's bar is up in place of the game's: the triggers are its)
-    return cfg.macrobar ~= false and C.MB.ok == true and C.MB.hid == true and not YUI_MAPCOVER;
+    return cfg.macrobar ~= false and C.MB.ok == true and C.MB.hid == true and not YUI_MAPCOVER and not C.mb_inmenu();
+end
+C.MB_MENU = { t = -9, v = false };
+C.MB_HUD = { helpwind = true, titlewin = true, partywin = true, netstat = true, buff = true, logwindo = true, casttime = true, targetwi = true, inline = true, mapframe = true, gaugewin = true, playermo = true };   -- (playermo: the game's field mode - the cursor's home while you just play or fight)
+function C.mb_inmenu()                                               -- (a game menu has the cursor - bags, a trade, a shop...: the triggers are the game's, as
+    local M = C.MB_MENU;                                             --  always - R2 held in a two-list menu keeps you on one list, left / right turn its pages)
+    if os.clock() - M.t < 0.1 then return M.v; end                   -- (looked at ten times a second)
+    M.t = os.clock(); M.v = false;
+    pcall(function()
+        for _, n in ipairs(vana.gameui.windows() or {}) do
+            if not C.MB_HUD[n] and not n:find('^mcr') and not n:find('macro') then   -- (the game's own macro palette - hidden, YunaUI's bar in its place - isn't a menu)
+                local w = vana.gameui.window(n);
+                if w and w.focused and not w.closing then M.v = true; return; end
+            end
+        end
+    end);
+    return M.v;
 end
 C.MB_XBITS = { { 0, 0x0001 }, { 1, 0x0002 }, { 2, 0x0004 }, { 3, 0x0008 }, { 12, 0x1000 } };   -- (D-pad up, down, left, right; confirm - A unless the game says otherwise)
 -- The game's own confirm / cancel buttons (vana.gamepad.bindings): a PlayStation-style pad set up with Circle to confirm
@@ -21906,6 +23380,7 @@ ashita.events.register('key', 'yui_mb_key', function(e)
     if wp >= 0x30 and wp <= 0x39 then                                -- (the digit YunaUI ran a macro with: not the game's as a window message either)
         for _, vk in pairs(C.MB.kdig or {}) do if vk == wp then e.blocked = true; return; end end
     end
+    if cfg.mb_arrows ~= true then return; end                       -- (ACTION BARS > Ctrl / Alt + arrows: off - the arrows and Enter are the game's: Ctrl + Left / Right pages the inventory)
     local w = C.MB_VK[wp];
     if w == nil and (wp == 0x26 or wp == 0x28) and C.mb_kbtog() then w = (wp == 0x26) and -1 or 1; end   -- (open by a tap: up / down move the pick)
     if w == nil then return; end
@@ -21949,7 +23424,7 @@ ashita.events.register('key_data', 'yui_kb', function(e)
         end
     end
     if (k == 0x1C or k == 0x9C) and C.MB.kbok then e.blocked = true; return; end   -- (the Enter that ran a macro: never the game's)
-    if k == 0x1C or k == 0x9C then                                   -- (Ctrl / Alt + Enter: the picked macro runs)
+    if (k == 0x1C or k == 0x9C) and cfg.mb_arrows == true then       -- (Ctrl / Alt + Enter: the picked macro runs - ACTION BARS > Ctrl / Alt + arrows on)
         local row = C.mb_kbrow();
         if row ~= 0 then
             local M = C.MB;
@@ -21960,8 +23435,8 @@ ashita.events.register('key_data', 'yui_kb', function(e)
             return;
         end
     end
-    local dir = C.MB_ARROWS[k];
-    if dir == nil and (k == 0xC8 or k == 0xD0) and C.mb_kbtog() then dir = (k == 0xC8) and -1 or 1; end   -- (open by a tap: up / down move the pick)
+    local dir = (cfg.mb_arrows == true) and C.MB_ARROWS[k] or nil;   -- (off: Ctrl + Left / Right the game's - its inventory pages)
+    if dir == nil and cfg.mb_arrows == true and (k == 0xC8 or k == 0xD0) and C.mb_kbtog() then dir = (k == 0xC8) and -1 or 1; end   -- (open by a tap: up / down move the pick)
     if dir then
         local row = C.mb_kbrow();
         if row ~= 0 then
@@ -21989,9 +23464,9 @@ ashita.events.register('key_state', 'yui_kb_state', function(e)    -- (the game 
     for dk, vk in pairs(C.MB.kdig or {}) do                          -- (a digit that ran a macro: the game never sees it, down to its release)
         if C.mb_key(vk) then keys[dk] = 0; else C.MB.kdig[dk] = nil; end
     end
-    if C.mb_kbrow() ~= 0 then for k in pairs(C.MB_ARROWS) do keys[k] = 0; end keys[0x1C] = 0; keys[0x9C] = 0; end   -- (Ctrl / Alt + arrows / Enter: the bar's)
+    if cfg.mb_arrows == true and C.mb_kbrow() ~= 0 then for k in pairs(C.MB_ARROWS) do keys[k] = 0; end keys[0x1C] = 0; keys[0x9C] = 0; end   -- (Ctrl / Alt + arrows / Enter: the bar's)
     if C.mb_kbrow() ~= 0 then for dk in pairs(C.MB_DIK) do keys[dk] = 0; end end   -- (and the digits, every read: the game read the state before the key's event came - Ctrl + 7 ran its macro too)
-    if C.mb_kbtog() then keys[0xC8] = 0; keys[0xD0] = 0; end         -- (open by a tap: up / down too)
+    if cfg.mb_arrows == true and C.mb_kbtog() then keys[0xC8] = 0; keys[0xD0] = 0; end         -- (open by a tap: up / down too)
     if C.MB.kbok then                                                -- (the Enter that ran a macro: hidden from the game down to its release)
         if keys[0x1C] == 0 and keys[0x9C] == 0 and not C.mb_key(0x0D) then C.MB.kbok = false; else keys[0x1C] = 0; keys[0x9C] = 0; end
     end
@@ -22092,6 +23567,20 @@ ashita.events.register('command', 'yui_command', function(e)
                 tostring(ent:GetName(idx)), px, py, pz, tostring(a1), tostring(a2), tostring(a3), mh or 0, tostring(hb), C.tall(idx, ent)));
         end);
         if not ok then msg('Tall info failed: ' .. tostring(err)); end
+    elseif sub == 'prof' then                                        -- (/yui prof: 10 s of how long each piece takes to draw - for a frame-rate report)
+        C.PROF, C.PROF_T, C.PROF_N, YUI_NSAVE = {}, os.clock(), 0, 0;
+        msg('Measuring for 10 seconds - keep playing as usual (target something if that is when it slows down)...');
+        ashita.tasks.once(10, function()
+            local el = math.max(0.1, os.clock() - (C.PROF_T or os.clock()));
+            local r = {};
+            for k, v in pairs(C.PROF or {}) do r[#r + 1] = { k, v }; end
+            table.sort(r, function(a_, b_) return a_[2] > b_[2]; end);
+            local fps = (C.PROF_N or 0) / el;
+            local out = string.format('FPS %.0f, saves %d. Per frame:', fps, YUI_NSAVE or 0);
+            for q = 1, math.min(6, #r) do out = out .. string.format(' %s %.2fms', tostring(r[q][1]), r[q][2] / math.max(1, C.PROF_N or 1) * 1000); end
+            C.PROF = nil;
+            msg(out);
+        end);
     elseif sub == 'mapinfo' then                                     -- (for a minimap report: where you are, and which map is shown)
         local ok, err = pcall(C.map_info);                           -- (always says something: the line, or why it couldn't)
         if not ok then msg('Map info failed: ' .. tostring(err)); end
