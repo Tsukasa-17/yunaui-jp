@@ -97,6 +97,90 @@ function JP.msg(t)                                                   -- (公式 
 end
 YUI_JP_T = JP.msg;   -- dps.lua / equip.lua のチャットメッセージ用（翻訳してShift-JISへ。公式 msg と同じ）
 
+function JP.fmt(s, ...)
+    if not JP.active then
+        if select('#', ...) > 0 then return string.format(s, ...); end
+        return s;
+    end
+    local t = JP.t(s);
+    if select('#', ...) > 0 then
+        local ok, r = pcall(string.format, t, ...);
+        if ok then return r; end
+        return string.format(s, ...);
+    end
+    return t;
+end
+function JP.upd_status(ver, U, cfg)                                  -- (GENERAL > UPDATES: your version and what it last heard)
+    if not JP.active then return nil; end
+    local st = JP.fmt('You have %s.', ver);
+    if U.state == 'checking' then return st .. '  ' .. JP.t('Checking...'); end
+    if U.said and U.said ~= '' then return st .. '  ' .. U.said; end
+    if type(cfg.upd_tag) == 'string' and U.newer and U.newer(cfg.upd_tag, ver) then return st .. '  ' .. JP.fmt('%s is out.', cfg.upd_tag); end
+    if type(cfg.upd_tag) == 'string' then return st .. '  ' .. JP.t('Up to date.'); end
+    return st;
+end
+
+function JP.wx(s)                                                    -- (weather names: a small table, so "Blizzard" the weather is not the spell)
+    if not JP.active or type(s) ~= 'string' then return s; end
+    local W = L and L.WX;
+    if type(W) == 'table' and W[s] then return W[s]; end
+    return JP.t(s);
+end
+function JP.upd_title(state, tag)
+    if not JP.active then return nil; end
+    if state == 'done' then return JP.t('YUNAUI UPDATED'); end
+    return JP.fmt('YUNAUI %s IS OUT', tostring(tag or ''));
+end
+
+-- ガイド本文は行に折り返してから描くため、段落ごと先に翻訳し、日本語は文字単位で折り返す
+function JP.guide_lines(s, maxw)
+    if not JP.active or type(s) ~= 'string' then return nil; end
+    local pref, path = s:match('^(It is turned off right now: turn it on in /yui > )(.+)%.$');
+    if pref then
+        s = '今はオフです。/yui > ' .. JP.t(path) .. ' でオンにしてください。';
+    else
+        s = JP.t(s);
+    end
+    if type(maxw) ~= 'number' or maxw <= 0 then return { s }; end
+    local function cw(t)
+        local w = imgui.CalcTextSize(t);
+        if type(w) == 'table' then w = w[1] or w.x or 0; end
+        return tonumber(w) or 0;
+    end
+    local chars = {};
+    for ch in s:gmatch('[%z\1-\127\194-\244][\128-\191]*') do chars[#chars + 1] = ch; end
+    local function break_after(ch)
+        if ch == ' ' or ch == '\t' then return true; end
+        if ch:byte(1) and ch:byte(1) >= 128 then return true; end   -- CJK などは直後で切ってよい
+        return ch:find('[、。，,．%.！!？?%）%)%]」』]') ~= nil;
+    end
+    local out, line, last_br = {}, '', 0;
+    for i, ch in ipairs(chars) do
+        if ch == '\n' then
+            out[#out + 1] = line; line, last_br = '', 0;
+        else
+            local try = line .. ch;
+            if line ~= '' and cw(try) > maxw then
+                if last_br > 0 and last_br < #line then
+                    out[#out + 1] = line:sub(1, last_br);
+                    local rest = line:sub(last_br + 1);
+                    if rest:sub(1, 1) == ' ' then rest = rest:sub(2); end
+                    line, last_br = rest .. ch, 0;
+                else
+                    out[#out + 1] = line;
+                    line, last_br = ((ch == ' ') and '' or ch), 0;
+                end
+            else
+                line = try;
+                if break_after(ch) then last_br = #line; end
+            end
+        end
+    end
+    if line ~= '' then out[#out + 1] = line; end
+    if #out == 0 then out[1] = s; end
+    return out;
+end
+
 -------------------------------------------------------------------- UTF-8 文字単位の字間描画
 function JP.mb(s) return JP.active and type(s) == 'string' and s:find('[\128-\255]') ~= nil; end
 local function chars(s)
@@ -361,7 +445,8 @@ local function hook_fonts()
             local c = T_.new(); c.MergeMode = true;
             pcall(function() c.DstFont = font; end);
             KEEP[#KEEP + 1] = c;
-            local merged = add(jp, tonumber(px) or 17, c);
+            local k_ = tonumber(YUI_JPK) or 1;               -- (CHAT > Japanese text size: official YUI_JPK)
+            local merged = add(jp, (tonumber(px) or 17) * k_, c);
             if merged then mark_japanese(font); end
         end);
     end

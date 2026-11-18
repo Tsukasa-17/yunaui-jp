@@ -287,7 +287,7 @@ local function item_icon(id)
         local item = AshitaCore:GetResourceManager():GetItemById(id);
         if item == nil or item.Bitmap == nil or (item.ImageSize or 0) == 0 then return; end
         local ptr = ffi.new('IDirect3DTexture8*[1]');
-        if ffi.C.D3DXCreateTextureFromFileInMemoryEx(d3d.get_device(), item.Bitmap, item.ImageSize, 0xFFFFFFFF, 0xFFFFFFFF, 1, 0,
+        if ffi.C.D3DXCreateTextureFromFileInMemoryEx(d3d.get_device(), item.Bitmap, math.max(item.ImageSize, (type(item.Bitmap) == 'string') and #item.Bitmap or 0), 0xFFFFFFFF, 0xFFFFFFFF, 1, 0,
                 ffi.C.D3DFMT_A8R8G8B8, ffi.C.D3DPOOL_MANAGED, ffi.C.D3DX_DEFAULT, ffi.C.D3DX_DEFAULT, 0xFF000000, nil, nil, ptr) ~= ffi.C.S_OK then
             return;
         end
@@ -2874,7 +2874,9 @@ function JOBS.statbar(key, value, v, lag, pct)
         flags = bit.bor(flags, ImGuiWindowFlags_NoMove);
         imgui.SetNextWindowPos({ ax, ay }, ImGuiCond_Always);
     else
-    imgui.SetNextWindowPos({ cfg[kx], cfg[ky] }, ((JOBS.sb_move or 0) > 0) and ImGuiCond_Always or ImGuiCond_FirstUseEver);
+    JOBS.sb_first = JOBS.sb_first or {};                             -- (its first draw since loading: where the settings say, not where ImGui remembers it)
+    local first_ = not JOBS.sb_first[kx]; JOBS.sb_first[kx] = true;
+    imgui.SetNextWindowPos({ cfg[kx], cfg[ky] }, (((JOBS.sb_move or 0) > 0) or first_) and ImGuiCond_Always or ImGuiCond_FirstUseEver);
     end
     imgui.PushStyleVar(ImGuiStyleVar_WindowPadding, { 0, 0 });
     imgui.PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0);
